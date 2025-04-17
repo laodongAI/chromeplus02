@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>网页内容分析工具</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="config.js"></script>
+  <script src="mcp_init.js"></script>
+</head>
+<body>
+  <div class="container">
+    <h1>网页内容分析工具</h1>
+    
+    <div class="control-group">
+      <h2>播放控制</h2>
+      <div class="button-group">
+        <button id="playButton" class="action-button play">播放</button>
+        <button id="pauseButton" class="action-button pause">暂停</button>
+      </div>
+    </div>
+    
+    <div class="control-group">
+      <h2>内容录制</h2>
+      <div class="button-group">
+        <button id="recordButton" class="action-button record">开始录制</button>
+        <button id="stopButton" class="action-button stop" disabled>停止录制</button>
+      </div>
+    </div>
+    
+    <div class="control-group">
+      <h2>AI内容分析</h2>
+      <div class="button-group">
+        <button id="analyzeButton" class="action-button analyze">分析内容</button>
+        <button id="saveButton" class="action-button save">保存结果</button>
+      </div>
+      <div class="analysis-result" id="analysisResult">
+        <div class="result-placeholder">点击"分析内容"开始AI分析...</div>
+        <div class="result-content" style="display: none;"></div>
+      </div>
+    </div>
+    
+    <div id="notification" class="notification" style="display: none;"></div>
+    
+    <div class="control-group">
+      <h2>设置</h2>
+      <button id="settingsButton" class="settings-button">显示设置</button>
+      <div id="settingsPanel" class="settings-panel" style="display: none;">
+        <!-- 支持的网站设置 -->
+        <div class="setting-section">
+          <h3>支持的网站</h3>
+          <div id="supportedSites" class="site-toggles"></div>
+        </div>
+        
+        <!-- AI模型选择 -->
+        <div class="setting-section">
+          <h3>AI模型</h3>
+          <div class="setting-item">
+            <label for="aiModelSelector">选择AI模型:</label>
+            <select id="aiModelSelector"></select>
+            <div class="model-actions">
+              <button id="addModelButton" class="small-button add">新增</button>
+              <button id="deleteModelButton" class="small-button delete">删除</button>
+            </div>
+          </div>
+          
+          <!-- 模型配置 -->
+          <div class="setting-item">
+            <label for="aiModelKey">API 密钥:</label>
+            <input type="password" id="aiModelKey" placeholder="输入API密钥">
+          </div>
+          <div class="setting-item">
+            <label for="aiModelUrl">API URL:</label>
+            <input type="text" id="aiModelUrl" placeholder="https://api.example.com/v1">
+          </div>
+          <div class="setting-item">
+            <label for="aiModelName">模型名称:</label>
+            <input type="text" id="aiModelName" placeholder="如：gpt-3.5-turbo">
+          </div>
+        </div>
+        
+        <!-- 配置文件选择器 -->
+        <div class="setting-section">
+          <h3>配置文件</h3>
+          <div class="setting-item">
+            <label for="configProfileSelector">选择配置方案:</label>
+            <select id="configProfileSelector"></select>
+            <div class="profile-actions">
+              <button id="addProfileButton" class="small-button add">新增</button>
+              <button id="deleteProfileButton" class="small-button delete">删除</button>
+              <button id="exportProfileButton" class="small-button export">导出</button>
+              <button id="importProfileButton" class="small-button import">导入</button>
+            </div>
+          </div>
+          <div class="setting-item">
+            <label for="profileName">配置名称:</label>
+            <input type="text" id="profileName" placeholder="输入配置名称">
+          </div>
+        </div>
+        
+        <!-- MCP服务状态 -->
+        <div class="setting-section">
+          <h3>文件保存</h3>
+          <div class="setting-item mcp-status">
+            <label>MCP 服务状态:</label>
+            <span id="mcpStatus" class="status-badge">检查中...</span>
+            <div id="mcpPath" class="setting-item-info" style="display: none;"></div>
+          </div>
+        </div>
+        
+        <!-- 保存按钮 -->
+        <div class="setting-item">
+          <button id="saveSettingsButton" class="action-button save">保存设置</button>
+        </div>
+      </div>
+    </div>
+    
+    <div class="info-panel">
+      <p>当前页面: 未打开支持的网站</p>
+      <p class="version">v1.0</p>
+    </div>
+  </div>
+  
+  <script src="sidepanel.js"></script>
+</body>
+</html>

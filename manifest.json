@@ -1,0 +1,55 @@
+{
+  "manifest_version": 3,
+  "name": "网页内容分析工具",
+  "version": "1.0.0",
+  "description": "支持B站、抖音、YouTube等多平台视频内容分析的智能助手",
+  "permissions": [
+    "tabs",
+    "activeTab",
+    "scripting",
+    "storage",
+    "sidePanel"
+  ],
+  "host_permissions": [
+    "*://*.bilibili.com/*",
+    "https://b23.tv/*",
+    "*://*.douyin.com/*",
+    "*://*.youtube.com/*",
+    "https://youtu.be/*",
+    "*://*.zhihu.com/*",
+    "*://*.weibo.com/*",
+    "*://*.xiaohongshu.com/*",
+    "https://api.moonshot.cn/*",
+    "https://api.openai.com/*",
+    "http://localhost:51512/*"
+  ],
+  "action": {
+    "default_title": "网页内容分析工具"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.bilibili.com/*",
+        "https://b23.tv/*",
+        "*://*.douyin.com/*",
+        "*://*.youtube.com/*",
+        "https://youtu.be/*",
+        "*://*.zhihu.com/*",
+        "*://*.weibo.com/*",
+        "*://*.xiaohongshu.com/*"
+      ],
+      "js": ["utils.js", "content_script.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  }
+}

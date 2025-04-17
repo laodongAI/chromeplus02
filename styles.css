@@ -1,0 +1,328 @@
+/* styles.css */
+
+body {
+    font-family: Arial, sans-serif;
+    padding: 15px;
+    width: 300px;
+    background-color: #f5f5f5;
+    color: #333;
+}
+
+.container {
+    display: flex;
+    flex-direction: column;
+    background-color: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    padding: 15px;
+}
+
+h1 {
+    font-size: 18px;
+    margin-bottom: 15px;
+    color: #00a1d6; /* B站蓝色 */
+    text-align: center;
+    border-bottom: 1px solid #eee;
+    padding-bottom: 10px;
+}
+
+h2 {
+    font-size: 16px;
+    margin: 10px 0;
+    color: #666;
+}
+
+.control-group {
+    margin-bottom: 15px;
+    border-bottom: 1px solid #eee;
+    padding-bottom: 10px;
+}
+
+.button-group {
+    display: flex;
+    justify-content: space-between;
+    margin: 10px 0;
+}
+
+.action-button {
+    flex: 1;
+    margin: 0 5px;
+    padding: 10px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: bold;
+    transition: background-color 0.2s, transform 0.1s;
+}
+
+.action-button:hover {
+    transform: translateY(-2px);
+}
+
+.action-button:active {
+    transform: translateY(1px);
+}
+
+.action-button:disabled {
+    background-color: #ccc;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.play {
+    background-color: #00a1d6; /* B站蓝色 */
+    color: white;
+}
+
+.pause {
+    background-color: #ff9db5; /* B站粉色 */
+    color: white;
+}
+
+.record {
+    background-color: #fb7299; /* B站主色调 */
+    color: white;
+}
+
+.stop {
+    background-color: #ff6b81;
+    color: white;
+}
+
+.analyze {
+    background-color: #6d9ee7;
+    color: white;
+}
+
+.save {
+    background-color: #66bb6a;
+    color: white;
+}
+
+.notification {
+    margin-top: 10px;
+    padding: 10px;
+    border-radius: 4px;
+    text-align: center;
+    font-size: 14px;
+    display: none;
+    animation: fadeIn 0.3s ease;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.info {
+    background-color: #e3f2fd;
+    color: #0288d1;
+    border: 1px solid #bbdefb;
+}
+
+.success {
+    background-color: #e8f5e9;
+    color: #4caf50;
+    border: 1px solid #c8e6c9;
+}
+
+.warning {
+    background-color: #fff8e1;
+    color: #ffa000;
+    border: 1px solid #ffecb3;
+}
+
+.error {
+    background-color: #ffebee;
+    color: #f44336;
+    border: 1px solid #ffcdd2;
+}
+
+.info-panel {
+    margin-top: 15px;
+    font-size: 12px;
+    color: #999;
+    text-align: center;
+}
+
+.version {
+    font-size: 11px;
+    color: #bbb;
+}
+
+/* 分析结果区域 */
+.analysis-result {
+    margin-top: 10px;
+    max-height: 150px;
+    overflow-y: auto;
+    border: 1px solid #eee;
+    border-radius: 4px;
+    padding: 8px;
+    font-size: 13px;
+    background-color: #f9f9f9;
+}
+
+.result-placeholder {
+    color: #999;
+    text-align: center;
+    padding: 20px 0;
+}
+
+.result-content {
+    white-space: pre-wrap;
+    line-height: 1.4;
+}
+
+/* 设置面板 */
+.settings-button {
+    width: 100%;
+    padding: 8px;
+    background-color: #eee;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    color: #333;
+    margin-bottom: 10px;
+    transition: background-color 0.2s;
+}
+
+.settings-button:hover {
+    background-color: #ddd;
+}
+
+.settings-panel {
+    background-color: #f9f9f9;
+    border-radius: 4px;
+    padding: 10px;
+    margin-top: 5px;
+}
+
+.setting-item {
+    margin-bottom: 10px;
+}
+
+.setting-item label {
+    display: block;
+    margin-bottom: 5px;
+    font-size: 13px;
+    color: #666;
+}
+
+.setting-item input {
+    width: 100%;
+    padding: 8px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    box-sizing: border-box;
+    font-size: 13px;
+}
+
+.setting-item input:focus {
+    border-color: #00a1d6;
+    outline: none;
+}
+
+/* 加载动画 */
+.loading {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border: 3px solid rgba(0, 161, 214, 0.3);
+    border-radius: 50%;
+    border-top-color: #00a1d6;
+    animation: spin 1s ease-in-out infinite;
+    margin-right: 8px;
+    vertical-align: middle;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* MCP状态显示 */
+.mcp-status {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.status-badge {
+    padding: 4px 8px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: bold;
+}
+
+.status-online {
+    background-color: #e8f5e9;
+    color: #4caf50;
+    border: 1px solid #c8e6c9;
+}
+
+.status-offline {
+    background-color: #ffebee;
+    color: #f44336;
+    border: 1px solid #ffcdd2;
+}
+
+.status-checking {
+    background-color: #e3f2fd;
+    color: #0288d1;
+    border: 1px solid #bbdefb;
+}
+
+.setting-item-info {
+    font-size: 11px;
+    color: #777;
+    margin-top: 4px;
+    padding: 4px;
+    background-color: #f5f5f5;
+    border-radius: 4px;
+    word-break: break-all;
+}
+
+/* 模型选择器 */
+#aiModelSelector {
+  width: 100%;
+  padding: 8px;
+  border-radius: 4px;
+  border: 1px solid #ccc;
+  margin-bottom: 5px;
+}
+
+/* 模型操作按钮容器 */
+.model-actions {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 5px;
+  margin-bottom: 10px;
+}
+
+/* 小型按钮 */
+.small-button {
+  padding: 5px 10px;
+  font-size: 12px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.3s;
+}
+
+.small-button.add {
+  background-color: #4CAF50;
+  color: white;
+}
+
+.small-button.add:hover {
+  background-color: #388E3C;
+}
+
+.small-button.delete {
+  background-color: #F44336;
+  color: white;
+}
+
+.small-button.delete:hover {
+  background-color: #D32F2F;
+}
