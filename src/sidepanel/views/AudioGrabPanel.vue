@@ -73,7 +73,7 @@
         <tr v-if="!loading && items.length === 0">
           <td colspan="7" class="empty-row">未在当前页面检测到音频资源</td>
         </tr>
-        <tr v-for="item in items" :key="item.url" :class="{ 'duplicate-row': duplicateSet.has(item.url) }">
+        <tr v-for="item in items" :key="item.url" :class="{ 'duplicate-row': duplicateSet.has(item.url), 'row-new': newAudioHighlight.has(item.url) }">
           <td>
             <input type="checkbox" :checked="isSelected(item.url)" @change="onSelectChange(item.url, $event)" />
           </td>
@@ -143,6 +143,7 @@ export default defineComponent({
   setup() {
     const { setCount } = useResourceCounts();
     const items = ref<AudioItemDTO[]>([]);
+    const newAudioHighlight = reactive(new Set<string>()); // 新增高亮集合
     const metaMap = reactive<Record<string, AudioMeta>>({});
     const loading = ref(false);
     const bulkDownloading = ref(false);
@@ -408,7 +409,10 @@ export default defineComponent({
             try {
               const payload: any = (message as any).payload || {};
               if(Array.isArray(payload.audio)){
-                items.value = payload.audio;
+                const prev = new Set(items.value.map(i=> i.url));
+                const incoming: AudioItemDTO[] = payload.audio;
+                incoming.forEach(a=> { if(!prev.has(a.url)) { newAudioHighlight.add(a.url); window.setTimeout(()=> newAudioHighlight.delete(a.url), 2500); } });
+                items.value = incoming;
                 setCount('audio', items.value.length);
                 lastAction.value = '自动增量更新';
               }
@@ -570,6 +574,7 @@ export default defineComponent({
 
     return {
       items: filteredItems,
+      newAudioHighlight,
       loading,
       error,
       lastAction,
@@ -701,6 +706,8 @@ function normalizeForDup(url: string): string {
   padding: var(--sp-spacing-4);
 }
 .duplicate-row { background: rgba(255,196,102,0.15); }
+.row-new { animation: rowNewFade 2.4s ease-in forwards; }
+@keyframes rowNewFade { 0% { background: rgba(79,156,255,0.55); } 60% { background: rgba(79,156,255,0.25); } 100% { background: transparent; } }
 .dup-badge { display:inline-block; padding:2px 4px; background:#ffc465; color:#7a4b00; border-radius:4px; font-size:10px; line-height:1; }
 
 .title {

@@ -93,7 +93,7 @@
         <tr v-if="!loading && videos.length === 0">
           <td colspan="6" class="empty-row">尚未识别到可控视频，请在含视频的页面中点击“重新扫描”。</td>
         </tr>
-        <tr v-for="video in videos" :key="video.index">
+        <tr v-for="video in videos" :key="video.index" :class="{ 'row-new': newVideoHighlight.has(video.index) }">
           <td class="checkbox-cell">
             <input
               type="checkbox"
@@ -209,6 +209,7 @@ export default defineComponent({
   setup() {
     const { setCount } = useResourceCounts();
     const videos = ref<VideoItemDTO[]>([]);
+    const newVideoHighlight = reactive(new Set<number>()); // 新增高亮集合
     const currentFrameId = ref<number|null>(null);
     const frameMode = ref<'auto'|'top'|'frame'>('auto');
     const frames = ref<FrameInfo[]>([]);
@@ -303,9 +304,10 @@ export default defineComponent({
         try {
           const payload: any = (message as any).payload || {};
           if (Array.isArray(payload.videos)) {
-            // 保留现有的过滤/排序设置
+            const prevIds = new Set(videos.value.map(v=> v.index));
             const incoming: VideoItemDTO[] = payload.videos;
             const filteredSorted = applyVideoFilterAndSort(incoming);
+            filteredSorted.forEach(v=> { if(!prevIds.has(v.index)) { newVideoHighlight.add(v.index); window.setTimeout(()=> newVideoHighlight.delete(v.index), 2500); } });
             videos.value = filteredSorted;
             setCount('video', videos.value.length);
             lastAction.value = '自动增量更新';
@@ -844,6 +846,7 @@ export default defineComponent({
 
     return {
       videos,
+      newVideoHighlight,
       videoCount,
       loading,
       error,
@@ -1018,6 +1021,8 @@ function toFriendlyVideoError(err: unknown) {
   color: var(--sp-color-muted);
   padding: var(--sp-spacing-4);
 }
+.row-new { animation: rowNewFade 2.4s ease-in forwards; }
+@keyframes rowNewFade { 0% { background: rgba(79,156,255,0.55); } 60% { background: rgba(79,156,255,0.25); } 100% { background: transparent; } }
 
 .video-meta__primary {
   font-weight: 600;

@@ -81,7 +81,7 @@
         <tr v-if="!loading && images.length===0">
           <td colspan="6" class="empty-row">未检测到图片资源</td>
         </tr>
-        <tr v-for="img in images" :key="img.key" :class="{ 'duplicate-row': duplicateSet.has(img.key) }">
+        <tr v-for="img in images" :key="img.key" :class="{ 'duplicate-row': duplicateSet.has(img.key), 'row-new': newHighlightSet.has(img.key) }">
           <td><input type="checkbox" :checked="isSelected(img.key)" @change="onSelectChange(img.key, $event)" /></td>
           <td>
             <div class="thumb" :ref="setObserverRef(img.key)">
@@ -145,6 +145,8 @@ export default defineComponent({
     const sortKey = ref<string>(''); // width|height|phash|url
     const sortDir = ref<'asc'|'desc'>('asc');
     const images = ref<RawImageItem[]>([]);
+    // 新增高亮集合 (UX-INCR-HINT-001)
+    const newHighlightSet = reactive<Set<string>>(new Set());
     const selected = reactive<Set<string>>(new Set());
     const ensureBusy = ref(false);
     const frameMode = ref<'auto'|'top'|'frame'>('auto');
@@ -412,8 +414,11 @@ export default defineComponent({
             try {
               const payload: any = (message as any).payload || {};
               if (Array.isArray(payload.images)) {
+                const prev = new Set(images.value.map(i=> i.key));
                 const mapped = payload.images.map((it: any) => ({ url: it.url, width: it.width||0, height: it.height||0, kind: String(it.kind||'img'), key: buildUnifiedMediaKey({ url: it.url, width: it.width||0, height: it.height||0, kind: String(it.kind||'img') }) }));
-                images.value = applyFilterInternal(mapped);
+                const filtered = applyFilterInternal(mapped);
+                filtered.forEach(i=> { if(!prev.has(i.key)) { newHighlightSet.add(i.key); window.setTimeout(()=> newHighlightSet.delete(i.key), 2500); } });
+                images.value = filtered;
                 setCount('image', images.value.length);
                 lastAction.value = '自动增量更新';
               }
@@ -584,7 +589,7 @@ export default defineComponent({
       return tabId;
     }
 
-    return { images, loading, error, lastAction, minWidth, minHeight, kindFilter, sortKey, sortDir, selectedCount, hasSelection, allSelected, processedKeys, loadedMap, duplicateSet, refreshImages, toggleSelectAll, isSelected, onSelectChange, applyFilter, downloadSelected, downloadSingle, copyLink, shorten, clearList, setObserverRef, toggleSort, onImgLoad, ensureBusy, ensureConnectAndRefresh, frameMode, frames, frameModeValue, onFrameModeChange, formatFrameLabel, queueTasks, renderTaskStatus, retryTask, cancelTask, frameInterval, frameCaptureActive, frameToggleBusy, nextTickCountdown, toggleFrameCapture, restrictedHint, mapErrorCode, renderErrorHint };
+    return { images, newHighlightSet, loading, error, lastAction, minWidth, minHeight, kindFilter, sortKey, sortDir, selectedCount, hasSelection, allSelected, processedKeys, loadedMap, duplicateSet, refreshImages, toggleSelectAll, isSelected, onSelectChange, applyFilter, downloadSelected, downloadSingle, copyLink, shorten, clearList, setObserverRef, toggleSort, onImgLoad, ensureBusy, ensureConnectAndRefresh, frameMode, frames, frameModeValue, onFrameModeChange, formatFrameLabel, queueTasks, renderTaskStatus, retryTask, cancelTask, frameInterval, frameCaptureActive, frameToggleBusy, nextTickCountdown, toggleFrameCapture, restrictedHint, mapErrorCode, renderErrorHint };
   }
 });
 </script>
@@ -606,6 +611,8 @@ export default defineComponent({
 .url-cell a { color: var(--sp-color-primary); word-break: break-all; }
 input[type='checkbox'] { width:16px; height:16px; }
 .duplicate-row { background: rgba(255,196,102,0.15); }
+.row-new { animation: rowNewFade 2.4s ease-in forwards; }
+@keyframes rowNewFade { 0% { background: rgba(79,156,255,0.55); } 60% { background: rgba(79,156,255,0.25); } 100% { background: transparent; } }
 .dup-badge { display:inline-block; margin-left:4px; padding:2px 4px; background:#ffc465; color:#7a4b00; border-radius:4px; font-size:10px; line-height:1; }
 
 /* 下载队列样式（简版） */
