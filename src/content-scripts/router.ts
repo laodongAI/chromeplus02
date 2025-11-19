@@ -6,7 +6,9 @@ import { bilibiliAdapter } from './adapters/bilibili';
 import { youtubeAdapter } from './adapters/youtube';
 import { douyinAdapter } from './adapters/douyin';
 import { scanAudioUrls } from './audio';
+import type { AudioItem } from './audio';
 import { scanImages } from './images';
+import type { ImageScanItem } from './images';
 import { MessageType, type VideoItemDTO, type VideoSourceCandidate, type VideoControlAction, type PongMessage } from '@/messaging';
 
 // 全局自动扫描开关缓存（来自存储），供增量观察函数使用
@@ -263,18 +265,20 @@ function tryInstallDynamicWatchers(features: Record<string, boolean>) {
   if (!(features.spaWatchers || autoScanEnabledGlobal)) return;
   try {
     installResiliencyWatchers(() => {
-      interface UpdatePayload {
-        images?: ReturnType<typeof scanImages>;
-        audio?: ReturnType<typeof scanAudioUrls>;
-        videos?: ReturnType<typeof scanVideoElements>;
-      }
-      const payload: UpdatePayload = {};
-      try { if (features.image) payload.images = scanImages(); } catch { /* noop */ }
-      try { if (features.audio) payload.audio = scanAudioUrls(); } catch { /* noop */ }
-      try { if (features.video) payload.videos = scanVideoElements(); } catch { /* noop */ }
-      if (payload.images || payload.audio || payload.videos) {
-        try { chrome.runtime.sendMessage({ type: MessageType.RESOURCE_UPDATE, payload }); } catch { /* noop */ }
-      }
+      // 使用抽象的聚合与差异检测，避免重复发送完全相同的快照
+      try {
+        const gathered = gatherResources(features);
+        if (gathered.changed) {
+          const { images, audio, videos } = gathered;
+          const payload: { images?: ImageScanItem[]; audio?: AudioItem[]; videos?: VideoItemDTO[] } = {};
+          if (images) payload.images = images;
+          if (audio) payload.audio = audio;
+          if (videos) payload.videos = videos;
+          if (payload.images || payload.audio || payload.videos) {
+            try { chrome.runtime.sendMessage({ type: MessageType.RESOURCE_UPDATE, payload }); } catch { /* noop */ }
+          }
+        }
+      } catch { /* noop */ }
       try { if (features.playbackEvents || features.video) attachVideoPlaybackListeners(); } catch { /* noop */ }
     });
   } catch { /* noop */ }
@@ -463,4 +467,78 @@ function installResiliencyWatchers(onChange: () => void) {
     });
     mo.observe(document.documentElement || document.body, { childList: true, subtree: true });
   } catch (e) { void 0; }
+}
+
+// ============== 资源聚合与差异检测 ==============
+/**
+ * 聚合当前页面的启用类别资源并进行差异检测。
+ * 仅当与上一次发送相比检测到新增/移除资源时返回 changed=true。
+ * 差异依据：
+ *  - 图片：url + 尺寸 + kind 组成的复合 key
+ *  - 音频：绝对 url
+ *  - 视频：稳定 index (WeakMap 分配)
+ */
+interface GatherResult {
+  images?: ImageScanItem[];
+  audio?: AudioItem[];
+  videos?: VideoItemDTO[];
+  changed: boolean;
+}
+
+let prevImageKeys = new Set<string>();
+let prevAudioUrls = new Set<string>();
+let prevVideoIds = new Set<number>();
+
+function buildImageKey(i: ImageScanItem): string { return `${i.url}#${i.width}x${i.height}#${i.kind}`; }
+
+function gatherResources(features: Record<string, boolean>): GatherResult {
+  const result: GatherResult = { changed: false };
+  let currentImageKeys: Set<string> | null = null;
+  let currentAudioUrls: Set<string> | null = null;
+  let currentVideoIds: Set<number> | null = null;
+
+  try {
+    if (features.image) {
+      const images = scanImages();
+      result.images = images;
+      currentImageKeys = new Set(images.map(buildImageKey));
+    }
+  } catch { /* noop */ }
+  try {
+    if (features.audio) {
+      const audio = scanAudioUrls();
+      result.audio = audio;
+      currentAudioUrls = new Set(audio.map(a => a.url));
+    }
+  } catch { /* noop */ }
+  try {
+    if (features.video) {
+      const videos = scanVideoElements();
+      result.videos = videos;
+      currentVideoIds = new Set(videos.map(v => v.index));
+    }
+  } catch { /* noop */ }
+
+  // 计算差异：任一类别有变动即视为 changed
+  let changed = false;
+  if (currentImageKeys) {
+    if (currentImageKeys.size !== prevImageKeys.size) changed = true;
+    else for (const k of currentImageKeys) { if (!prevImageKeys.has(k)) { changed = true; break; } }
+  }
+  if (!changed && currentAudioUrls) {
+    if (currentAudioUrls.size !== prevAudioUrls.size) changed = true;
+    else for (const k of currentAudioUrls) { if (!prevAudioUrls.has(k)) { changed = true; break; } }
+  }
+  if (!changed && currentVideoIds) {
+    if (currentVideoIds.size !== prevVideoIds.size) changed = true;
+    else for (const k of currentVideoIds) { if (!prevVideoIds.has(k)) { changed = true; break; } }
+  }
+
+  // 更新快照集
+  if (currentImageKeys) prevImageKeys = currentImageKeys;
+  if (currentAudioUrls) prevAudioUrls = currentAudioUrls;
+  if (currentVideoIds) prevVideoIds = currentVideoIds;
+
+  result.changed = changed;
+  return result;
 }

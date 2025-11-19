@@ -116,5 +116,6 @@
 | 2025-11-19 | R-AUD-DET-001 | 进行中 | 扩展音频扫描：link preload + JSON-LD AudioObject/MusicRecording |
 | 2025-11-19 | R-DL-PROG-001 | 进行中 | 新增 `GlobalDownloadBar.vue` 聚合进度/速率/ETA 显示 |
 | 2025-11-19 | UX-PROGRESS-OVERLAY-001 | 开始 | 顶部全局下载进度条基础版本接入 |
+| 2025-11-19 | FE-INCR-SCAN-001 | 进行中 | 引入 gatherResources 差异检测 + MutationObserver/History 自动推送 RESOURCE_UPDATE |
 
 > 更新流程：每次功能/交互/视觉改动合并后在对应表格更新“状态”字段，并追加一条“状态变更记录”行；禁止遗漏，以保障路线图透明。
