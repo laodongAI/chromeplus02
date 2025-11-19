@@ -1,0 +1,41 @@
+:root {
+  --sp-font-family: 'Segoe UI', 'PingFang SC', 'Microsoft Yahei', sans-serif;
+  --sp-color-bg: #0f1726;
+  --sp-color-bg-elevated: #141c2c;
+  --sp-color-surface: #182235;
+  --sp-color-border: #26324b;
+  --sp-color-muted: #94a3b8;
+  --sp-color-text: #e2e8f0;
+  --sp-color-heading: #f8fafc;
+  --sp-color-primary: #4f9cff;
+  --sp-color-primary-hover: #74b6ff;
+  --sp-color-primary-active: #2b75d8;
+  --sp-color-success: #3dd598;
+  --sp-color-warning: #f6c343;
+  --sp-color-danger: #f87171;
+  --sp-shadow-card: 0 4px 20px rgba(9, 9, 11, 0.35);
+  --sp-radius-sm: 6px;
+  --sp-radius-md: 12px;
+  --sp-radius-lg: 18px;
+  --sp-spacing-2: 8px;
+  --sp-spacing-3: 12px;
+  --sp-spacing-4: 16px;
+  --sp-spacing-5: 20px;
+  --sp-spacing-6: 24px;
+  --sp-transition-fast: 120ms ease;
+}
+
+body {
+  margin: 0;
+  font-family: var(--sp-font-family);
+  background: var(--sp-color-bg);
+  color: var(--sp-color-text);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+a {
+  color: var(--sp-color-primary);
+}

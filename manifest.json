@@ -8,9 +8,13 @@
     "activeTab",
     "scripting",
     "storage",
-    "sidePanel"
+    "sidePanel",
+    "downloads",
+    "webRequest",
+    "webNavigation"
   ],
   "host_permissions": [
+    "<all_urls>",
     "*://*.bilibili.com/*",
     "https://b23.tv/*",
     "*://*.douyin.com/*",
@@ -19,6 +23,8 @@
     "*://*.zhihu.com/*",
     "*://*.weibo.com/*",
     "*://*.xiaohongshu.com/*",
+    "*://*.npr.org/*",
+    "https://ondemand.npr.org/*",
     "https://api.moonshot.cn/*",
     "https://api.openai.com/*",
     "http://localhost:51512/*"
@@ -36,6 +42,7 @@
   "content_scripts": [
     {
       "matches": [
+        "<all_urls>",
         "*://*.bilibili.com/*",
         "https://b23.tv/*",
         "*://*.douyin.com/*",
@@ -43,13 +50,21 @@
         "https://youtu.be/*",
         "*://*.zhihu.com/*",
         "*://*.weibo.com/*",
-        "*://*.xiaohongshu.com/*"
+        "*://*.xiaohongshu.com/*",
+        "*://*.npr.org/*"
       ],
-      "js": ["utils.js", "content_script.js"],
-      "run_at": "document_idle"
+      "js": [
+        "content_script.js"
+      ],
+      "css": [
+        "styles.css"
+      ],
+      "run_at": "document_end",
+      "all_frames": true,
+      "match_about_blank": true
     }
   ],
-  "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'"
+  "icons": {
+    "16": "icons/icon-16.png"
   }
 }
