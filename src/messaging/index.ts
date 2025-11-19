@@ -63,7 +63,7 @@ export interface StartDownloadPayload {
 
 export interface DownloadQueueActionMessage {
   type: MessageType.DOWNLOAD_QUEUE_ACTION;
-  action: 'add' | 'cancel' | 'retry';
+  action: 'add' | 'cancel' | 'retry' | 'pause_all' | 'resume_all' | 'retry_failed_all';
   task?: { url: string; filename?: string; kind?: string };
   id?: string;
 }
@@ -101,6 +101,7 @@ export interface DownloadQueueSnapshotMessage {
     errorCode?: string;
     retries?: number;
   }>;
+  paused?: boolean; // 队列是否被全局暂停
 }
 
 export interface AudioItemDTO {

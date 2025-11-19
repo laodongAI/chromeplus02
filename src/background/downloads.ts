@@ -12,7 +12,7 @@ interface BgDownloadTask {
   url: string;
   fileName?: string;
   kind?: string;
-  status: 'pending' | 'running' | 'completed' | 'error' | 'canceled';
+  status: 'pending' | 'running' | 'paused' | 'completed' | 'error' | 'canceled';
   error?: string;
   errorCode?: string; // DRM | CORS | PERMISSION | NO_RESOURCE | NETWORK | INTERRUPTED | UNKNOWN
   progress?: number;
@@ -34,6 +34,7 @@ let namingTemplate: string | undefined;
 let autoScan: boolean | undefined; // 预留：内容脚本增量扫描开关
 let running = 0;
 let progressAttached = false;
+let queuePaused = false; // 全局暂停标记：阻止新任务启动
 
 export function initDownloadsMessageHandler() {
   if (!chrome?.runtime?.onMessage) return;
@@ -64,6 +65,12 @@ export function initDownloadsMessageHandler() {
           cancelTask(message.id as string); sendResponse({ success: true });
         } else if (action === 'retry') {
           retryTask(message.id as string); sendResponse({ success: true });
+        } else if (action === 'pause_all') {
+          pauseAll(); sendResponse({ success: true });
+        } else if (action === 'resume_all') {
+          resumeAll(); sendResponse({ success: true });
+        } else if (action === 'retry_failed_all') {
+          retryFailedAll(); sendResponse({ success: true });
         } else {
           sendResponse({ success: false, error: '未知动作' });
         }
@@ -126,6 +133,7 @@ function retryTask(id: string) {
 }
 
 function drain() {
+  if (queuePaused) return;
   if (running >= concurrency) return;
   const next = queue.find(q => q.status === 'pending');
   if (!next) return;
@@ -165,7 +173,7 @@ function serializeQueue() {
 }
 
 function broadcastSnapshot() {
-  try { chrome.runtime.sendMessage({ type: MessageType.DOWNLOAD_QUEUE_SNAPSHOT, tasks: serializeQueue() }); } catch { /* noop */ }
+  try { chrome.runtime.sendMessage({ type: MessageType.DOWNLOAD_QUEUE_SNAPSHOT, tasks: serializeQueue(), paused: queuePaused }); } catch { /* noop */ }
 }
 function broadcastProgress(t: BgDownloadTask) {
   try { chrome.runtime.sendMessage({ type: MessageType.DOWNLOAD_PROGRESS_EVENT, id: t.id, downloadId: t.downloadId, progress: t.progress, bytesReceived: t.bytesReceived, totalBytes: t.totalBytes, state: t.status, speedBps: t.speedBps, etaSeconds: t.etaSeconds, error: t.error, errorCode: t.errorCode, finished: t.status==='completed' || t.status==='error' || t.status==='canceled' }); } catch { /* noop */ }
@@ -211,6 +219,7 @@ function attachProgressEvents() {
       const d: any = delta;
       if (!task) return; // 仅跟踪队列内任务
       const state = d?.state?.current;
+      const pausedFlag = d?.paused?.current;
       const bytesReceived = d?.bytesReceived?.current;
       const totalBytes = d?.totalBytes?.current;
       if (typeof bytesReceived === 'number') task.bytesReceived = bytesReceived;
@@ -226,7 +235,9 @@ function attachProgressEvents() {
           task.etaSeconds = task.speedBps ? Math.round(remain / task.speedBps) : undefined;
         } else { task.etaSeconds = undefined; }
       }
-      if (state === 'complete') {
+      if (pausedFlag === true) {
+        task.status = 'paused';
+      } else if (state === 'complete') {
         task.status = 'completed'; task.progress = 1; task.finishedAt = Date.now();
       } else if (state === 'interrupted') {
         task.status = 'error';
@@ -236,6 +247,8 @@ function attachProgressEvents() {
         task.errorCode = classifyError(task.error) || 'INTERRUPTED';
         task.finishedAt = Date.now();
         handleAutoRetry(task);
+      } else if (task.status === 'paused' && pausedFlag === false && state === 'in_progress') {
+        task.status = 'running';
       }
       broadcastProgress(task);
     } catch { /* noop */ }
@@ -340,4 +353,47 @@ function classifyError(msg?: string): string | undefined {
   if (/(network|timeout|connection|net::err)/.test(m)) return 'NETWORK';
   if (/(interrupt|cancel)/.test(m)) return 'INTERRUPTED';
   return 'UNKNOWN';
+}
+
+// ===== 全局暂停/恢复与批量重试 =====
+function pauseAll(){
+  queuePaused = true;
+  queue.forEach(t => {
+    if (t.status === 'running' && typeof t.downloadId === 'number') {
+      try { chrome.downloads.pause(t.downloadId); } catch { /* noop */ }
+      t.status = 'paused';
+    }
+  });
+  broadcastSnapshot();
+}
+function resumeAll(){
+  queuePaused = false;
+  queue.forEach(t => {
+    if (t.status === 'paused' && typeof t.downloadId === 'number') {
+      try { chrome.downloads.resume(t.downloadId); } catch { /* noop */ }
+      t.status = 'running';
+    }
+  });
+  broadcastSnapshot();
+  drain();
+}
+function retryFailedAll(){
+  queue.forEach(t => {
+    if (t.status === 'error') {
+      t.status = 'pending';
+      t.error = undefined;
+      t.errorCode = undefined;
+      t.progress = 0;
+      t.downloadId = undefined;
+      t.bytesReceived = undefined;
+      t.totalBytes = undefined;
+      t.speedBps = undefined;
+      t.etaSeconds = undefined;
+      t.startedAt = undefined;
+      t.finishedAt = undefined;
+      t.retries = (t.retries||0)+1;
+    }
+  });
+  broadcastSnapshot();
+  drain();
 }

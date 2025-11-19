@@ -62,7 +62,7 @@
 | UX-TABLE-SELECTION-001 | 视频表复选框 | 行选择+表头全选 | `VideoCapturePanel.vue` | P0 | 已完成 | 为批量操作打基础 |
 | UX-MULTI-TAB-001 | 侧栏分组/标签页 | 按资源类型分标签页或折叠 | `SidePanelApp.vue` | P1 | 未开始 | 降低信息密度 |
 | UX-KEYBOARD-SHORTCUT-001 | 快捷键体系 | 播放/录制/抓帧/全选快捷键 | 全局 | P2 | 未开始 | 可自定义映射 |
-| UX-PROGRESS-OVERLAY-001 | 下载进度聚合 | 顶部统一进度条与剩余时间 | `GlobalDownloadBar.vue` | P1 | 进行中(基础) | 已接入：完成数/速率/剩余时间；后续补错误聚合与暂停全部 |
+| UX-PROGRESS-OVERLAY-001 | 下载进度聚合 | 顶部统一进度条与剩余时间 | `GlobalDownloadBar.vue` | P1 | 进行中(增强) | 已接入：完成数/速率/剩余时间 + 错误统计 + 暂停/继续 + 重试失败 |
 | UX-ERROR-TAXONOMY-001 | 错误分类提示 | 统一错误类型与解决建议 | 全局 | P1 | 进行中 | 已显示分类徽章；后续聚合与重试策略 |
 | UX-INLINE-FILTER-001 | 行内筛选器 | 分辨率/时长/大小即时过滤 | 视频/图片面板 | P2 | 未开始 | 与存储持久化 |
 | UX-INCR-HINT-001 | 增量变更提示 | 新增/失效资源高亮淡入淡出 | 各资源列表 | P2 | 未开始 | 动画与标记 |

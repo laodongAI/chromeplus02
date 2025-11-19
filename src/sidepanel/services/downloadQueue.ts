@@ -7,7 +7,7 @@ export interface DownloadTask {
   fileName?: string;
   kind: 'image' | 'audio' | 'video';
   messageType?: MessageType | string; // allow legacy
-  status: 'pending' | 'running' | 'completed' | 'error' | 'canceled';
+  status: 'pending' | 'running' | 'paused' | 'completed' | 'error' | 'canceled';
   error?: string;
   errorCode?: string; // DRM | CORS | PERMISSION | NO_RESOURCE | NETWORK | INTERRUPTED | UNKNOWN
   progress?: number; // 0-1
@@ -51,6 +51,16 @@ export async function cancelDownload(id: string) {
 
 export async function retryDownload(id: string){
   await sendRuntimeMessage({ type: MessageType.DOWNLOAD_QUEUE_ACTION, action: 'retry', id });
+}
+
+export async function pauseAllDownloads(){
+  await sendRuntimeMessage({ type: MessageType.DOWNLOAD_QUEUE_ACTION, action: 'pause_all' });
+}
+export async function resumeAllDownloads(){
+  await sendRuntimeMessage({ type: MessageType.DOWNLOAD_QUEUE_ACTION, action: 'resume_all' });
+}
+export async function retryFailedAllDownloads(){
+  await sendRuntimeMessage({ type: MessageType.DOWNLOAD_QUEUE_ACTION, action: 'retry_failed_all' });
 }
 
 // 旧本地并发逻辑移除，统一由后台队列调度。
