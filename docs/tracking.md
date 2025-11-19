@@ -12,10 +12,10 @@
 | R-VID-CTRL-001 | F-VID-CTRL | U-VID-ITEM | `router.ts`(稳定控制)、`VideoCapturePanel.vue`(按钮) | 已完成(增强) | 控制使用稳定 ID；多视频播放/暂停不再错位 |
 | R-VID-REC-001 | F-VID-REC | U-VID-ITEM | `sidepanel.js`(录制/仅音轨) | 已完成(基础) | 支持视频+音频录制与仅音轨录制，状态展示待补 |
 | R-VID-FRAME-001 | F-VID-FRAME | U-VID-ITEM | `sidepanel.js`(抓帧)、`content_script.js`(画布) | 已完成(基础) | 已支持抓帧与截图，失败回退/命名模板待补 |
-| R-DL-LIST-001 | F-DL-BATCH | U-BATCH | `downloads.ts`(后台队列)、`downloadQueue.ts`(订阅 UI) | 进行中 | 中央并发+任务快照+进度事件搭建中 |
-| R-DL-PROG-001 | F-DL-PROG | U-STATUS | `downloads.ts`(监听广播)+`Video/Audio/ImagePanel`(展示)+`GlobalDownloadBar.vue`(聚合) | 进行中(聚合条基础) | 队列快照+进度事件 + 全局聚合进度/速率/ETA |
-| R-SET-NAME-001 | F-SET-NAME | U-SETTINGS | `SettingsPanel.vue`(表单+预览)、`downloads.ts`(模板应用)、`format.ts` | 进行中 | 表单/变量预览已加入，后台使用模板命名 |
-| R-SET-AUTO-001 | F-SET-BASE | U-SETTINGS | `SettingsPanel.vue`(autoScan/concurrency)、`downloads.ts`(并发调节) | 进行中 | 并发/自动扫描设置存储与消息更新 |
+| R-DL-LIST-001 | F-DL-BATCH | U-BATCH | `downloads.ts`(后台队列)、`downloadQueue.ts`(订阅 UI) | 已完成 | 并发控制+任务快照+进度事件稳定运行 |
+| R-DL-PROG-001 | F-DL-PROG | U-STATUS | `downloads.ts`(监听广播)+`Video/Audio/ImagePanel`(展示)+`GlobalDownloadBar.vue`(聚合) | 已完成(增强) | 聚合条显示进度/速率/ETA/错误统计/暂停与重试 |
+| R-SET-NAME-001 | F-SET-NAME | U-SETTINGS | `SettingsPanel.vue`(表单+预览+保存/重置)、`downloads.ts`(模板应用)、`format.ts` | 已完成(增强) | 命名模板自动+手动保存，变量预览与默认重置 |
+| R-SET-AUTO-001 | F-SET-BASE | U-SETTINGS | `SettingsPanel.vue`(autoScan/concurrency)、`downloads.ts`(并发调节)、`settings.ts` | 已完成 | 自动扫描与并发上限持久化+消息驱动后台刷新 |
 | R-ERR-HINT-001 | F-ERR-HINT | U-STATUS | `downloads.ts`(分类)、`downloadQueue.ts`(传递 errorCode)、`Image/Audio/VideoCapturePanel.vue`(徽章+提示) | 进行中 | 后台 errorCode 分类 + 前端错误类型徽章与解决建议；后续补重试策略与统一聚合 |
 
 ## 2. 开发任务列表（Backlog）
@@ -62,7 +62,7 @@
 | UX-TABLE-SELECTION-001 | 视频表复选框 | 行选择+表头全选 | `VideoCapturePanel.vue` | P0 | 已完成 | 为批量操作打基础 |
 | UX-MULTI-TAB-001 | 侧栏分组/标签页 | 按资源类型分标签页或折叠 | `SidePanelApp.vue` | P1 | 未开始 | 降低信息密度 |
 | UX-KEYBOARD-SHORTCUT-001 | 快捷键体系 | 播放/录制/抓帧/全选快捷键 | 全局 | P2 | 未开始 | 可自定义映射 |
-| UX-PROGRESS-OVERLAY-001 | 下载进度聚合 | 顶部统一进度条与剩余时间 | `GlobalDownloadBar.vue` | P1 | 进行中(增强) | 已接入：完成数/速率/剩余时间 + 错误统计 + 暂停/继续 + 重试失败 |
+| UX-PROGRESS-OVERLAY-001 | 下载进度聚合 | 顶部统一进度条与剩余时间 | `GlobalDownloadBar.vue` | P1 | 已完成(增强) | 完成数/速率/ETA/错误统计/暂停/继续/重试失败 全集成 |
 | UX-ERROR-TAXONOMY-001 | 错误分类提示 | 统一错误类型与解决建议 | 全局 | P1 | 进行中 | 已显示分类徽章；后续聚合与重试策略 |
 | UX-INLINE-FILTER-001 | 行内筛选器 | 分辨率/时长/大小即时过滤 | 视频/图片面板 | P2 | 未开始 | 与存储持久化 |
 | UX-INCR-HINT-001 | 增量变更提示 | 新增/失效资源高亮淡入淡出 | 各资源列表 | P2 | 进行中 | 已为图片/视频/音频面板实现新增高亮动画 |
@@ -113,10 +113,15 @@
 | 2025-11-19 | FE-TEMPLATE-NAMING-001 | 开始 | 建立命名变量服务与后台队列重命名逻辑 |
 | 2025-11-19 | R-ERR-HINT-001 | 开始 | 后台加入错误分类 (errorCode) 与侧栏三面板错误徽章显示 |
 | 2025-11-19 | FE-RETRY-STRATEGY-001 | 开始 | 引入自动重试策略（网络/中断 2 次），UI 显示重试计数 |
-| 2025-11-19 | R-AUD-DET-001 | 进行中 | 扩展音频扫描：link preload + JSON-LD AudioObject/MusicRecording |
+| 2025-11-19 | R-AUD-DET-001 | 完成 | 扩展音频扫描：支持 link preload 和 JSON-LD AudioObject/MusicRecording 的解析与去重 |
 | 2025-11-19 | R-DL-PROG-001 | 进行中 | 新增 `GlobalDownloadBar.vue` 聚合进度/速率/ETA 显示 |
 | 2025-11-19 | UX-PROGRESS-OVERLAY-001 | 开始 | 顶部全局下载进度条基础版本接入 |
 | 2025-11-19 | FE-INCR-SCAN-001 | 进行中 | 引入 gatherResources 差异检测 + MutationObserver/History 自动推送 RESOURCE_UPDATE |
 | 2025-11-19 | UX-INCR-HINT-001 | 开始 | 新增高亮动画应用于图片/视频/音频面板 (row-new + fade) |
+| 2025-11-19 | R-DL-LIST-001 | 完成 | 实现中央并发控制、任务快照和进度事件 |
+| 2025-11-19 | R-DL-PROG-001 | 完成 | 聚合条增强：进度百分比+速率+ETA+错误分类统计+暂停/继续+失败重试 |
+| 2025-11-19 | UX-PROGRESS-OVERLAY-001 | 完成 | 顶部聚合下载条支持速率/ETA/错误统计与批量控制操作 |
+| 2025-11-19 | R-SET-NAME-001 | 完成 | 设置面板：命名模板支持自动/立即保存与重置默认 |
+| 2025-11-19 | R-SET-AUTO-001 | 完成 | 设置面板：并发与自动扫描参数持久化并消息通知后台 |
 
 > 更新流程：每次功能/交互/视觉改动合并后在对应表格更新“状态”字段，并追加一条“状态变更记录”行；禁止遗漏，以保障路线图透明。

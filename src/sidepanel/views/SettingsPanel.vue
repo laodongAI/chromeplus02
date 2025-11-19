@@ -22,33 +22,12 @@
 import { defineComponent, reactive, computed, watch } from 'vue';
 import { BaseCard, FormField } from '../components/base';
 import { formatFilename } from '@/utils/format';
+import { loadSettings, saveSettings, type ExtensionSettings } from '../services/settings';
 import { sendRuntimeMessage } from '../utils/chromeMessaging';
 import { MessageType } from '@/messaging';
 
-interface ExtensionSettings { namingTemplate: string; autoScan: boolean; maxConcurrent: number }
-
-function loadSettings(): Promise<ExtensionSettings> {
-  return new Promise(resolve => {
-    try {
-      chrome.storage.local.get('global_settings_v1', res => {
-        const raw = res?.global_settings_v1 || {};
-        resolve({
-          namingTemplate: raw.namingTemplate || '{site}_{title}_{datetime}',
-          autoScan: typeof raw.autoScan === 'boolean' ? raw.autoScan : false,
-          maxConcurrent: typeof raw.maxConcurrent === 'number' ? raw.maxConcurrent : 3
-        });
-      });
-    } catch { resolve({ namingTemplate: '{site}_{title}_{datetime}', autoScan: false, maxConcurrent: 3 }); }
-  });
-}
-
-async function saveSettings(s: ExtensionSettings) {
-  try {
-    chrome.storage.local.set({ global_settings_v1: { ...s } });
-    // 通知后台更新运行时参数
-    await sendRuntimeMessage({ type:  MessageType.SETTINGS_UPDATE, payload: { namingTemplate: s.namingTemplate, autoScan: s.autoScan, maxConcurrent: s.maxConcurrent } });
-  } catch { /* noop */ }
-}
+// 增强：添加显式“立即保存”按钮与重置功能，避免用户疑惑自动保存时机。
+// 统一使用 services/settings.ts 中的加载与保存逻辑，减少重复代码。
 
 export default defineComponent({
   name: 'SettingsPanel',
@@ -60,8 +39,21 @@ export default defineComponent({
     let saveTimer: number | null = null;
     watch(state, () => {
       if (saveTimer) window.clearTimeout(saveTimer);
+      // 防抖自动保存
       saveTimer = window.setTimeout(() => { saveSettings(state); saveTimer = null; }, 400);
     }, { deep: true });
+
+    function immediateSave(){
+      if (saveTimer) { window.clearTimeout(saveTimer); saveTimer = null; }
+      saveSettings(state);
+    }
+
+    function resetToDefault(){
+      state.namingTemplate = '{site}_{title}_{datetime}';
+      state.autoScan = false;
+      state.maxConcurrent = 3;
+      immediateSave();
+    }
 
     const previewFilename = computed(() => {
       const docTitle = document.title || 'page';
@@ -69,7 +61,7 @@ export default defineComponent({
       return formatFilename(state.namingTemplate, { site, title: docTitle.slice(0,40), index: 1 });
     });
 
-    return { state, previewFilename };
+    return { state, previewFilename, immediateSave, resetToDefault };
   }
 });
 </script>
@@ -91,4 +83,8 @@ export default defineComponent({
 }
 .preview-label { color: var(--sp-color-muted); }
 .preview-value { color: var(--sp-color-heading); word-break: break-all; }
+.settings-actions { display:flex; gap:8px; margin-top:8px; }
+.settings-actions button { background:#203347; color:#cdd9e5; border:1px solid #335578; padding:4px 10px; font-size:12px; border-radius:4px; cursor:pointer; }
+.settings-actions button:hover { background:#2a4461; }
+.settings-actions button:active { background:#183246; }
 </style>

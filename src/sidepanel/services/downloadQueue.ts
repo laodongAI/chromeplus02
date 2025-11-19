@@ -155,3 +155,38 @@ function ensureRuntimeProgressListener(){
   chrome.runtime.onMessage.addListener(handler);
   progressListenerAttached = true;
 }
+
+// 增加中央并发控制逻辑
+const MAX_CONCURRENT_DOWNLOADS = 3;
+let activeDownloads = 0;
+
+function processQueue() {
+  if (activeDownloads >= MAX_CONCURRENT_DOWNLOADS) return;
+  const nextTask = queue.find(t => t.status === 'pending');
+  if (!nextTask) return;
+
+  nextTask.status = 'running';
+  activeDownloads++;
+  emitUpdate();
+
+  sendRuntimeMessage({ type: MessageType.DOWNLOAD_QUEUE_ACTION, action: 'start', id: nextTask.id })
+    .then(() => {
+      nextTask.status = 'completed';
+      nextTask.finishedAt = Date.now();
+    })
+    .catch(err => {
+      nextTask.status = 'error';
+      nextTask.error = err.message;
+    })
+    .finally(() => {
+      activeDownloads--;
+      processQueue();
+      emitUpdate();
+    });
+}
+
+export function addDownloadWithConcurrency(url: string, fileName: string | undefined, kind: DownloadTask['kind'], messageType?: MessageType | string) {
+  addDownload(url, fileName, kind, messageType).then(id => {
+    if (id) processQueue();
+  });
+}

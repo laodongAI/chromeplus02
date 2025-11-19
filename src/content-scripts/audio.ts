@@ -89,11 +89,12 @@ export function scanAudioUrls(): AudioItem[] {
   if (ogAudio?.content && isAudioUrl(ogAudio.content)) add(ogAudio.content, document.title);
 
     // 4) preload/link 引用的音频资源 (<link rel="preload" as="audio" href="..."> 或 <link rel="audio" href>)
+    const audioRelTypes = ['audio', 'preload', 'enclosure'];
     document.querySelectorAll<HTMLLinkElement>('link[rel][href]').forEach(link => {
       const rel = (link.rel || '').toLowerCase();
       const asAttr = (link.getAttribute('as') || '').toLowerCase();
       if (!link.href) return;
-      const isAudioRel = rel === 'audio' || (rel === 'preload' && asAttr === 'audio');
+      const isAudioRel = audioRelTypes.includes(rel) || (rel === 'preload' && asAttr === 'audio');
       if (isAudioRel && isAudioUrl(link.href)) add(link.href, document.title);
     });
 
@@ -117,8 +118,8 @@ function deepQuerySelectorAll<T extends Element>(selector: string, root: Documen
     const current = queue.shift()!;
     current.querySelectorAll<T>(selector).forEach((el) => out.push(el));
     current.querySelectorAll<HTMLElement>('*').forEach((el) => {
-      const anyEl = el as any;
-      if (anyEl.shadowRoot) queue.push(anyEl.shadowRoot as ShadowRoot);
+      const shadowRoot = (el as HTMLElement & { shadowRoot?: ShadowRoot }).shadowRoot;
+      if (shadowRoot) queue.push(shadowRoot);
     });
   }
   return out;
@@ -126,15 +127,15 @@ function deepQuerySelectorAll<T extends Element>(selector: string, root: Documen
 
 // ===== JSON-LD 提取 =====
 interface JsonLdAudioLike { url?: string; contentUrl?: string; name?: string; headline?: string; }
-function extractAudioFromJsonLd(root: any): AudioItem[] {
+function extractAudioFromJsonLd(root: Record<string, unknown>): AudioItem[] {
   const found: AudioItem[] = [];
-  const visit = (node: any) => {
+  const visit = (node: Record<string, unknown> | Record<string, unknown>[] | null) => {
     if (!node || typeof node !== 'object') return;
     // 处理数组
     if (Array.isArray(node)) { node.forEach(visit); return; }
-    const type = (node['@type'] || '').toLowerCase();
-    if (type === 'audioobject' || type === 'musicrecording') {
-      const candidate: JsonLdAudioLike = node;
+    const type = (node['@type'] as string || '').toLowerCase();
+    if (['audioobject', 'musicrecording', 'audiobook'].includes(type)) {
+      const candidate = node as JsonLdAudioLike;
       const url = candidate.contentUrl || candidate.url;
       if (url && isAudioUrl(url)) {
         const title = candidate.name || candidate.headline || document.title;
@@ -142,10 +143,7 @@ function extractAudioFromJsonLd(root: any): AudioItem[] {
       }
     }
     // 继续遍历子属性
-    Object.keys(node).forEach(k => {
-      if (k === '@context' || k === '@type') return;
-      visit(node[k]);
-    });
+    Object.keys(node).forEach(k => visit(node[k] as Record<string, unknown>));
   };
   visit(root);
   return found;
