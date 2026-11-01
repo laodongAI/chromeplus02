@@ -7,6 +7,7 @@
         <span class="rec-label">录制中</span>
         <span class="rec-timer">{{ timerDisplay }}</span>
       </div>
+      <div class="annot-hint" v-if="annotTabId != null">✏️ 页面画笔已开启：录制画面顶部有工具栏（矩形/直线/箭头/画笔/撤销/清空），画的内容会录进视频</div>
       <div class="recording-info" v-if="selectedSource">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>
@@ -202,6 +203,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue';
+import { MessageType } from '@/messaging';
 
 interface SourceItem {
   id: number | string;
@@ -224,6 +226,7 @@ const emit = defineEmits<{ (e: 'open-editor', rec: RecordingFile): void }>();
 
 const sourceType = ref<'screen' | 'tab'>('screen');
 const selectedSource = ref<SourceItem | null>(null);
+const annotTabId = ref<number | undefined>(undefined);
 const tabs = ref<SourceItem[]>([]);
 const loadingTabs = ref(false);
 const starting = ref(false);
@@ -360,6 +363,21 @@ async function startRecording() {
     });
 
     mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+
+    // 开启页面画笔覆盖层（画面内容会被录进视频）
+    try {
+      let targetTabId: number | undefined;
+      if (sourceType.value === 'tab' && selectedSource.value) {
+        targetTabId = Number(selectedSource.value.id);
+      } else {
+        const t = await chrome.tabs.query({ active: true, currentWindow: true });
+        targetTabId = t[0]?.id;
+      }
+      if (targetTabId != null && Number.isFinite(targetTabId)) {
+        annotTabId.value = targetTabId;
+        await chrome.tabs.sendMessage(targetTabId, { type: MessageType.ANNOTATE_TOGGLE, payload: { active: true } }).catch(() => {});
+      }
+    } catch { /* 画笔开启失败不影响录制 */ }
     mediaRecorder.onstop = () => finalizeRecording();
     mediaRecorder.start(1000); // 每秒切片
 
@@ -394,7 +412,15 @@ function togglePause() {
   paused.value = !paused.value;
 }
 
+async function closeAnnotate() {
+  const tabId = annotTabId.value;
+  annotTabId.value = undefined;
+  if (tabId == null) return;
+  try { await chrome.tabs.sendMessage(tabId, { type: MessageType.ANNOTATE_TOGGLE, payload: { active: false } }).catch(() => {}); } catch { /* noop */ }
+}
+
 function stopRecording() {
+  void closeAnnotate();
   if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
   if (mediaRecorder && mediaRecorder.state !== 'inactive') {
     mediaRecorder.stop();
@@ -447,6 +473,16 @@ onBeforeUnmount(() => { if (recording.value) stopRecording(); if (timerInterval)
 </script>
 
 <style scoped>
+.annot-hint {
+  margin: 8px 16px 0;
+  padding: 7px 10px;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  background: rgba(245, 158, 11, 0.10);
+  color: #d97706;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+}
 .screen-record-panel { display: flex; flex-direction: column; gap: 0; }
 
 /* header */

@@ -11,6 +11,7 @@ import { initCaptureHandlers } from './capture';
 import { setupMessageRouter } from './messageRouter';
 import { initSourcesDownloadCleanup } from './sourcesDownload';
 import { initBadge } from './badge';
+import { initCompanionHandlers } from './companion';
 
 // 消息总线必须最先初始化，后续模块的 registerBgHandler 才能被路由
 initMessageBus();
@@ -19,5 +20,6 @@ initCaptureHandlers();
 setupMessageRouter();
 initSourcesDownloadCleanup();
 initBadge();
+initCompanionHandlers();
 
 console.log('[background:index] 背景脚手架已加载');

@@ -25,6 +25,8 @@ export interface ExtensionSettings {
   showShortcutHints: boolean;
   /** 界面主题：auto 跟随系统 */
   theme: ThemeMode;
+  /** 极速下载：优先派发给本地伴生程序（yt-dlp），未安装时自动回退内置链路 */
+  companion: boolean;
   ai: AIModelConfig;
 }
 
@@ -53,11 +55,12 @@ export async function loadSettings(): Promise<ExtensionSettings> {
           maxConcurrent: typeof raw.maxConcurrent === 'number' ? raw.maxConcurrent : 3,
           showShortcutHints: typeof raw.showShortcutHints === 'boolean' ? raw.showShortcutHints : true,
           theme: raw.theme === 'light' || raw.theme === 'dark' ? raw.theme : 'auto',
+          companion: typeof raw.companion === 'boolean' ? raw.companion : false,
           ai: { ...DEFAULT_AI, ...(raw.ai || {}) },
         });
       });
     } catch {
-      resolve({ namingTemplate: '{site}_{title}_{datetime}', autoScan: false, maxConcurrent: 3, showShortcutHints: true, theme: 'auto', ai: DEFAULT_AI });
+      resolve({ namingTemplate: '{site}_{title}_{datetime}', autoScan: false, maxConcurrent: 3, showShortcutHints: true, theme: 'auto', companion: false, ai: DEFAULT_AI });
     }
   });
 }

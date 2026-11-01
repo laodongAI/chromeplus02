@@ -12,6 +12,7 @@ import type { ImageScanItem } from './images';
 import { scanPageSources } from './sources';
 import { MessageType, type VideoItemDTO, type VideoSourceCandidate, type VideoControlAction, type PongMessage } from '@/messaging';
 import { initTextExtractor } from './text';
+import { toggleAnnotate } from './annotate';
 
 // 全局自动扫描开关缓存（来自存储），供增量观察函数使用
 let autoScanEnabledGlobal = false;
@@ -109,6 +110,16 @@ export function initContentScript() {
           sendResponse({ success: true, enabled: { ...features } });
         } catch (e: unknown) {
           sendResponse({ success: false, error: (e as Error)?.message || '启用功能失败' });
+        }
+        break;
+      }
+      case MessageType.ANNOTATE_TOGGLE: {
+        // 录屏页面画笔覆盖层开关
+        try {
+          toggleAnnotate(!!message?.payload?.active);
+          sendResponse({ success: true });
+        } catch (e: unknown) {
+          sendResponse({ success: false, error: (e as Error)?.message || '画笔工具切换失败' });
         }
         break;
       }

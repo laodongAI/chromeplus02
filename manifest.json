@@ -14,7 +14,8 @@
     "webNavigation",
     "debugger",
     "alarms",
-    "tabCapture"
+    "tabCapture",
+    "nativeMessaging"
   ],
   "host_permissions": [
     "<all_urls>",

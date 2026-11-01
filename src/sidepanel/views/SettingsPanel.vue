@@ -28,6 +28,20 @@
             <option value="dark">暗色</option>
           </select>
         </div>
+        <div class="setting-row">
+          <div class="setting-row__info">
+            <div class="setting-row__label">⚡ 极速下载（本地伴生程序）</div>
+            <div class="setting-row__hint">优先派发给本地 yt-dlp（数千站点），失败自动回退内置链路</div>
+          </div>
+          <div class="toggle" :class="{ 'is-on': state.companion }" @click="state.companion = !state.companion" role="switch" :aria-checked="state.companion"></div>
+        </div>
+        <div class="setting-row" v-if="state.companion">
+          <div class="setting-row__info">
+            <div class="setting-row__label">伴生程序状态</div>
+            <div class="setting-row__hint">{{ companionStatusText }}</div>
+          </div>
+          <BaseButton size="sm" variant="ghost" :loading="companionChecking" @click="checkCompanion">重新检测</BaseButton>
+        </div>
       </div>
 
       <!-- Text / Number Settings -->
@@ -255,7 +269,25 @@ export default defineComponent({
       state.maxConcurrent = 3;
       state.showShortcutHints = true;
       state.theme = 'auto';
+      state.companion = false;
     }
+
+    // ── 极速下载伴生程序状态 ──
+    const companionStatusText = ref('未检测');
+    const companionChecking = ref(false);
+    async function checkCompanion() {
+      if (companionChecking.value) return;
+      companionChecking.value = true;
+      try {
+        const resp: any = await sendRuntimeMessage({ type: 'COMPANION_STATUS' });
+        companionStatusText.value = resp?.online
+          ? '✓ 在线（本地 yt-dlp 已就绪，下载将优先派发）'
+          : '✗ 未检测到：请到仓库 companion/ 目录运行 install.bat <扩展ID>（扩展 ID 可在 chrome://extensions 查看）';
+      } catch (e: any) {
+        companionStatusText.value = '✗ 检测失败：' + (e?.message || '未知错误');
+      } finally { companionChecking.value = false; }
+    }
+    watch(() => state.companion, (v) => { if (v) void checkCompanion(); });
 
     const previewFilename = computed(() => {
       try {
@@ -304,7 +336,8 @@ export default defineComponent({
     }
 
     return { state, historyCount, handleClearHistory, immediateSave, resetToDefault, previewFilename,
-             showApiKey, testingAI, testResult, onProviderChange, testAI };
+             showApiKey, testingAI, testResult, onProviderChange, testAI,
+             companionStatusText, companionChecking, checkCompanion };
   }
 });
 </script>

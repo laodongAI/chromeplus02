@@ -35,6 +35,8 @@ export enum MessageType {
   // HLS(m3u8) 分片下载
   , START_HLS_DOWNLOAD = 'START_HLS_DOWNLOAD'
   , HLS_BLOB_READY = 'HLS_BLOB_READY'
+  // 录屏页面画笔
+  , ANNOTATE_TOGGLE = 'ANNOTATE_TOGGLE'
   // 文本
   , GET_TEXT_CONTENT = 'GET_TEXT_CONTENT'
 }

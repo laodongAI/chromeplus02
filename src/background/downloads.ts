@@ -10,6 +10,7 @@ import { MessageType, type StartDownloadPayload } from '@/messaging';
 import { formatFilename } from '@/utils/format';
 import { registerBgHandler } from './bus';
 import { prepareMediaTask, runHlsDownload, hlsAbort, isAbortError, type HlsTaskMeta } from './hls';
+import { downloadWithCompanion, isCompanionEnabled, ensureCompanion } from './companion';
 
 // 内部任务结构（后台统一管理队列）
 interface BgDownloadTask {
@@ -285,6 +286,20 @@ async function runTask(task: BgDownloadTask) {
       task.fileName = finalName;
       task.progress = 1; task.status = 'completed'; task.finishedAt = Date.now(); broadcastProgress(task);
       return;
+    }
+    // 极速下载：开启且伴生程序在线时优先派发（yt-dlp 支持数千站点），失败回退内置直链
+    if (isCompanionEnabled() && await ensureCompanion()) {
+      const r = await downloadWithCompanion(task.url, pct => {
+        task.progress = Math.min(0.99, pct);
+        broadcastProgress(task);
+      });
+      if (r.ok) {
+        if (r.file) task.fileName = r.file;
+        task.progress = 1; task.status = 'completed'; task.finishedAt = Date.now();
+        broadcastProgress(task);
+        return;
+      }
+      console.warn('[downloads] 伴生下载失败，回退直链:', r.error);
     }
     try {
       const id = await startDownload({ url: task.url, filename: task.fileName || task.url.split('/').pop() || 'file' });
