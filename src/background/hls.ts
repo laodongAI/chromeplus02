@@ -11,7 +11,8 @@
  */
 
 import { parseM3U8, pickBestVariant, type M3u8Byterange, type M3u8ParseResult } from '@/core/m3u8';
-import { detectMergeType, mergeSegments, type HlsMergeType } from '@/core/hlsMerge';
+import { detectMergeType, mergeSegments, concatBytes, type HlsMergeType } from '@/core/hlsMerge';
+import { canRemux, remuxTsToMp4 } from '@/core/tsRemux';
 import { STORE_HLS_SEGMENTS, STORE_HLS_BLOBS, idbPut, idbGet, idbGetAllKeys, idbDeleteByPrefix } from '@/shared/blobStore';
 
 export interface HlsKeyInfo {
@@ -157,7 +158,20 @@ export async function runHlsDownload(
       if (!buf) throw new Error(`分片 ${i} 缺失，请重试`);
       parts.push(new Uint8Array(buf));
     }
-    const merged = mergeSegments(parts, meta.mergeType);
+    // TS 分片：优先转封装为标准 MP4（mux.js），失败/超量回退朴素 .ts 拼接
+    let merged;
+    if (meta.mergeType === 'ts') {
+      const totalBytes = parts.reduce((s, p) => s + p.byteLength, 0);
+      let remuxed: Uint8Array | null = null;
+      if (await canRemux(totalBytes)) {
+        remuxed = await remuxTsToMp4(concatBytes(parts));
+      }
+      merged = remuxed
+        ? { blob: new Blob([remuxed.buffer as ArrayBuffer], { type: 'video/mp4' }), mime: 'video/mp4', extension: 'mp4' }
+        : mergeSegments(parts, 'ts');
+    } else {
+      merged = mergeSegments(parts, meta.mergeType);
+    }
 
     // 交给侧边栏触发保存（SW 无 createObjectURL）
     const entry: HlsBlobEntry = { blob: merged.blob, fileName: `${fileNameBase}.${merged.extension}`, mime: merged.mime, totalDuration: meta.totalDuration, savedAt: Date.now() };

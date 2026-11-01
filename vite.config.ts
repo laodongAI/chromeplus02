@@ -38,7 +38,9 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      '@': resolve(__dirname, 'src')
+      '@': resolve(__dirname, 'src'),
+      // vendored mux.js(UMD) 的唯一依赖垫片（Service Worker 无 window）
+      'global/window': resolve(__dirname, 'src/vendor/global-window.js')
     }
   }
 });

@@ -36,3 +36,15 @@ export function mergeSegments(parts: Uint8Array[], type: HlsMergeType): MergedMe
       return { blob: new Blob(parts as BlobPart[], { type: 'video/mp2t' }), mime: 'video/mp2t', extension: 'ts' };
   }
 }
+
+/** 将多个分片按序拼为单个 Uint8Array（转封装器需要整段连续数据） */
+export function concatBytes(parts: Uint8Array[]): Uint8Array {
+  const total = parts.reduce((s, p) => s + p.byteLength, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const p of parts) {
+    out.set(p, offset);
+    offset += p.byteLength;
+  }
+  return out;
+}

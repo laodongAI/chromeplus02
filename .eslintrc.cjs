@@ -21,5 +21,5 @@ module.exports = {
     'vue/multi-word-component-names': 'off',
     '@typescript-eslint/no-explicit-any': 'warn'
   },
-  ignorePatterns: ['dist/**', 'node_modules/**']
+  ignorePatterns: ['dist/**', 'node_modules/**', 'src/vendor/**']
 };
