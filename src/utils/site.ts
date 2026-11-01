@@ -1,48 +1,53 @@
 /**
  * 站点识别与支持性判断工具。
- * 职责：判断 URL 是否属于支持站点、根据 URL 返回站点信息。
+ * 数据源：src/data/sites.ts（内置分类目录）+ 用户配置（RootConfig.supportedSites）。
+ * 匹配规则：hostname 后缀精确匹配（替代旧的关键词 includes，避免 notbilibili.com 误判）。
  */
 
 import type { RootConfig } from './config';
+import { SITE_CATALOG, findSiteEntryByHost } from '@/data/sites';
 
-export interface SiteInfo { id: string; name?: string }
+export interface SiteInfo { id: string; name?: string; category?: string; desc?: string }
 
-/**
- * 检查URL是否匹配支持的网站。
- */
-export function isSupportedSite(url?: string, config?: RootConfig): boolean {
-  if (!url) return false;
-  const u = url.toLowerCase();
-  const quick = ['bilibili.com', 'b23.tv', 'douyin.com', 'zhihu.com', 'youtube.com', 'youtu.be', 'weibo.com', 'xiaohongshu.com'];
-  if (quick.some((d) => u.includes(d))) return true;
-  if (!config?.supportedSites) return false;
-  return config.supportedSites.some((site) => {
-    if (!site.enabled) return false;
-    if (!Array.isArray(site.domains)) return false;
-    return site.domains.some((d) => u.includes((d || '').toLowerCase()));
-  });
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
+function matchInConfig(url: string, config?: RootConfig): SiteInfo | null {
+  if (!config?.supportedSites) return null;
+  const host = hostOf(url);
+  if (!host) return null;
+  for (const site of config.supportedSites) {
+    if (!site.enabled || !Array.isArray(site.domains)) continue;
+    for (const d of site.domains) {
+      const dd = (d || '').toLowerCase();
+      if (dd && (host === dd || host.endsWith('.' + dd))) {
+        return { id: site.id || dd, name: site.name };
+      }
+    }
+  }
+  return null;
 }
 
 /**
- * 根据URL获取网站基础信息（id/name）。
+ * 检查 URL 是否属于支持的网站（内置目录优先，其次用户配置）。
+ */
+export function isSupportedSite(url?: string, config?: RootConfig): boolean {
+  if (!url) return false;
+  if (findSiteEntryByHost(url)) return true;
+  return !!matchInConfig(url, config);
+}
+
+/**
+ * 根据 URL 获取网站信息（含中文名/分类/描述，来自内置目录）。
  */
 export function getSiteInfo(url?: string, config?: RootConfig): SiteInfo | null {
   if (!url) return null;
-  const u = url.toLowerCase();
-  const quick: Record<string, SiteInfo> = {
-    'bilibili.com': { id: 'bilibili', name: '哔哩哔哩' },
-    'b23.tv': { id: 'bilibili', name: '哔哩哔哩' },
-    'douyin.com': { id: 'douyin', name: '抖音' },
-    'zhihu.com': { id: 'zhihu', name: '知乎' },
-    'youtube.com': { id: 'youtube', name: 'YouTube' },
-    'youtu.be': { id: 'youtube', name: 'YouTube' },
-    'weibo.com': { id: 'weibo', name: '微博' },
-    'xiaohongshu.com': { id: 'xiaohongshu', name: '小红书' }
-  };
-  for (const [domain, info] of Object.entries(quick)) {
-    if (u.includes(domain)) return info;
-  }
-  if (!config?.supportedSites) return null;
-  const site = config.supportedSites.find((s) => s.enabled && Array.isArray(s.domains) && s.domains.some((d) => u.includes((d || '').toLowerCase())));
-  return site || null;
+  const entry = findSiteEntryByHost(url);
+  if (entry) return { id: entry.id, name: entry.name, category: entry.category, desc: entry.desc };
+  return matchInConfig(url, config);
 }
