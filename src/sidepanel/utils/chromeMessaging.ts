@@ -133,6 +133,21 @@ async function injectContentScripts(tabId: number, files: string[]): Promise<voi
   if (!chrome?.scripting?.executeScript) {
     throw new Error('无法注入内容脚本：缺少 scripting 权限');
   }
+  // 受限页面（扩展自身页面 / chrome:// / 应用店等）禁止注入，给出可读原因而非原始报错
+  try {
+    const tab = await new Promise<chrome.tabs.Tab | null>((resolve) => {
+      try { chrome.tabs.get(tabId, (t) => { void chrome.runtime.lastError; resolve(t || null); }); } catch { resolve(null); }
+    });
+    const url = tab?.url || tab?.pendingUrl || '';
+    if (url) {
+      // 延迟导入避免循环依赖
+      const { getRestrictedPageMessage } = await import('./restrictedPages');
+      const msg = getRestrictedPageMessage(url);
+      if (msg) throw new Error(msg);
+    }
+  } catch (e) {
+    if (e instanceof Error && e.message && !/lastError/.test(e.message)) throw e;
+  }
   await new Promise<void>((resolve, reject) => {
     chrome.scripting.executeScript(
       {

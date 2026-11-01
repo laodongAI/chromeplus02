@@ -10,7 +10,19 @@ interface RestrictedRule {
   message: string;
 }
 
+function selfOrigin(): string {
+  try { return chrome.runtime.getURL(''); } catch { return ''; }
+}
+
 const RULES: RestrictedRule[] = [
+  {
+    // 本扩展自身的页面（侧栏入口/编辑器等）：把最常见场景给出行动指引
+    test: (url) => {
+      const origin = selfOrigin();
+      return !!origin && url.startsWith(origin);
+    },
+    message: '当前标签页是 MediaPlus 自己的页面（如视频编辑器），无法作为分析对象。请切换到要分析的网页标签后重试。'
+  },
   {
     test: (url) => /^chrome:\/\//i.test(url) || /^edge:\/\//i.test(url) || /^brave:\/\//i.test(url) || /^opera:\/\//i.test(url),
     message: '该标签页属于浏览器内部页面（如 chrome:// 或 edge://），Chrome 扩展无法在此注入内容脚本。'
@@ -20,8 +32,8 @@ const RULES: RestrictedRule[] = [
     message: '该页面是 Chrome PDF 查看器，无法注入内容脚本。'
   },
   {
-    test: (url) => url.startsWith('chrome-extension://') && !url.includes('sidepanel.html'),
-    message: '正在查看其它扩展页面，Chrome 不允许注入到 chrome-extension:// 页面。'
+    test: (url) => url.startsWith('chrome-extension://') || url.startsWith('edge-extension://') || url.startsWith('about:'),
+    message: '正在查看扩展内部页面或 about: 页面，Chrome 不允许在此注入内容脚本。'
   },
   {
     test: (url) => /chromewebstore\.google\.(com|cn)/i.test(url) || url.startsWith('https://chrome.google.com/webstore'),

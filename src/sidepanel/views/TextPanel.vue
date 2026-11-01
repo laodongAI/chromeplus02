@@ -71,6 +71,7 @@ import { defineComponent, ref } from 'vue';
 import { aiSummarizePage } from '../services/aiAssist';
 import { BaseButton, BaseCard, BaseTag } from '../components/base';
 import { getActiveTabInfo, sendMessageToTab } from '../utils/chromeMessaging';
+import { isRestrictedPage, getRestrictedPageMessage } from '../utils/restrictedPages';
 import { MessageType, type TextContentDTO } from '@/messaging';
 
 export default defineComponent({
@@ -87,6 +88,12 @@ export default defineComponent({
       try {
         const info = await getActiveTabInfo();
         if (!info?.id) throw new Error('无法获取当前标签页');
+        // 受限页面预检：扩展自身页面 / chrome:// / 应用店等不做注入尝试
+        if (isRestrictedPage(info.url || info.pendingUrl)) {
+          error.value = getRestrictedPageMessage(info.url || info.pendingUrl) || '该页面不允许扩展注入内容脚本';
+          loading.value = false;
+          return;
+        }
         const res = await sendMessageToTab<{ success: boolean; content?: TextContentDTO; error?: string }>(info.id, { type: MessageType.GET_TEXT_CONTENT });
         if (!res?.success || !res.content) throw new Error(res?.error || '提取失败');
         content.value = res.content;
