@@ -25,3 +25,6 @@ coverage/
 .vite/
 playwright-report/
 test-results/
+
+# 发布包（构建产物不入库）
+release/
