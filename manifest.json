@@ -11,7 +11,10 @@
     "sidePanel",
     "downloads",
     "webRequest",
-    "webNavigation"
+    "webNavigation",
+    "debugger",
+    "alarms",
+    "tabCapture"
   ],
   "host_permissions": [
     "<all_urls>",
@@ -30,14 +33,19 @@
     "http://localhost:51512/*"
   ],
   "action": {
-    "default_title": "网页内容分析工具"
+    "default_title": "网页内容分析工具",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
   },
   "background": {
-    "service_worker": "background.js",
+    "service_worker": "js/background.js",
     "type": "module"
   },
   "side_panel": {
-    "default_path": "sidepanel.html"
+    "default_path": "src/sidepanel/index.html"
   },
   "content_scripts": [
     {
@@ -54,10 +62,7 @@
         "*://*.npr.org/*"
       ],
       "js": [
-        "content_script.js"
-      ],
-      "css": [
-        "styles.css"
+        "js/content.js"
       ],
       "run_at": "document_end",
       "all_frames": true,
@@ -65,6 +70,25 @@
     }
   ],
   "icons": {
-    "16": "icons/icon-16.png"
+    "16": "icons/icon-16.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "src/editor/*",
+        "src/editor/index.html",
+        "src/editor/main.ts"
+      ],
+      "matches": [
+        "<all_urls>",
+        "chrome-extension://*/*"
+      ]
+    }
+  ],
+  "options_ui": {
+    "page": "src/editor/index.html",
+    "open_in_tab": true
   }
 }

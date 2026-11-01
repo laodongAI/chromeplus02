@@ -1,5 +1,5 @@
 <template>
-  <BaseCard title="视频采集" subtitle="扫描页面中的视频资源，执行控制与录制" padded>
+  <BaseCard title="视频采集" subtitle="扫描页面中的视频资源，执行控制与录制" :padded="true">
     <div class="toolbar">
       <div class="toolbar__left">
         <BaseButton size="sm" variant="secondary" :loading="loading" @click="refreshVideoList">
@@ -18,166 +18,140 @@
         <span class="toolbar__hint" v-if="frames && frames.length">帧: {{ frames.length }}</span>
       </div>
       <div class="toolbar__right">
-        <span v-if="error" class="status status--error">{{ error }}</span>
+        <span v-if="error && !restrictedHint" class="status status--error">{{ error }}</span>
         <span v-else-if="loading" class="status">扫描中…</span>
         <span v-else-if="lastAction" class="status">{{ lastAction }}</span>
       </div>
     </div>
 
     <div class="restricted-banner" v-if="restrictedHint">
-      {{ restrictedHint }}
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="banner-icon"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      <span class="banner-text">{{ restrictedHint }}<em class="banner-hint">请切换到普通网页后再试。</em></span>
+      <button class="banner-close" @click="restrictedHint = null" title="关闭提示">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
     </div>
 
     <!-- 全局批量控制工具栏 -->
     <div class="global-video-bar" v-if="videoCount > 0">
       <div class="global-video-bar__left">
-        <BaseButton size="sm" variant="ghost" :disabled="loading" @click="playAll" :loading="globalBusy.playAll">播放全部</BaseButton>
-        <BaseButton size="sm" variant="ghost" :disabled="loading" @click="pauseAll" :loading="globalBusy.pauseAll">暂停全部</BaseButton>
-        <BaseButton size="sm" variant="ghost" :disabled="loading" @click="toggleAll" :loading="globalBusy.toggleAll">切换全部</BaseButton>
-        <BaseButton size="sm" variant="ghost" :disabled="loading || anyRecording" @click="startRecordAll" :loading="globalBusy.recordAllStart">批量录制</BaseButton>
-        <BaseButton size="sm" variant="danger" :disabled="!anyRecording" @click="stopRecordAll" :loading="globalBusy.recordAllStop">停止全部录制</BaseButton>
+        <BaseButton size="sm" variant="secondary" :disabled="loading || !anyRecording" :loading="globalBusy.recordAllStop" @click="stopRecordAll">停止所有录制</BaseButton>
+        <BaseButton size="sm" variant="secondary" :disabled="loading" :loading="globalBusy.recordAllStart" @click="startRecordAll">批量录制</BaseButton>
+        <BaseButton size="sm" variant="secondary" :disabled="loading || !hasSelection" @click="downloadSelected">下载选中</BaseButton>
+        <select class="frame-select" v-model="filterDownloadStatus" :disabled="loading">
+          <option value="all">全部状态</option>
+          <option value="new">未下载</option>
+          <option value="downloaded">已下载</option>
+        </select>
       </div>
       <div class="global-video-bar__right">
         <span class="global-summary">{{ playbackSummary }}</span>
+        <BaseButton size="sm" variant="ghost" :loading="globalBusy.playAll || globalBusy.pauseAll" @click="togglePlayAll" :title="allPaused ? '全部播放' : '全部暂停'">
+          {{ allPaused ? '▶' : '⏸' }}
+        </BaseButton>
       </div>
     </div>
 
-    <!-- 下载队列展示 -->
-    <div class="download-queue" v-if="queueTasks.length">
-      <div class="download-queue__header">下载队列 ({{ queueTasks.length }})</div>
-      <ul class="download-queue__list">
-        <li v-for="t in queueTasks" :key="t.id" class="dq-item" :class="'dq-'+t.status">
-          <span class="dq-name" :title="t.fileName || t.url">{{ (t.fileName || t.url).slice(0,48) }}<span v-if="(t.fileName||t.url).length>48">…</span></span>
-          <span class="dq-status">{{ renderTaskStatus(t) }}</span>
-          <span class="dq-progress" v-if="t.status==='running'">
-            <span class="bar"><span class="bar__inner" :style="{ width: ((t.progress||0)*100)+'%' }"></span></span>
-          </span>
-          <span v-if="t.status==='error'" class="dq-error" :title="renderErrorHint(t)">{{ mapErrorCode(t.errorCode) }}</span>
-          <span v-if="canOfferFallback(t)" class="dq-fallback">
-            <BaseButton size="sm" variant="ghost" @click="fallbackRecord(t)">录制回退</BaseButton>
-          </span>
-          <div class="dq-actions">
-            <BaseButton size="sm" variant="ghost" v-if="t.status==='error' || t.status==='canceled'" @click="retryTask(t.id)">重试</BaseButton>
-            <BaseButton size="sm" variant="ghost" v-if="t.status==='pending' || t.status==='running'" @click="cancelTask(t.id)">取消</BaseButton>
-          </div>
-        </li>
-      </ul>
-    </div>
-
-    <BaseTable :dense="true">
+    <SelectionTable
+      :items="displayVideos"
+      :selected="selectedIndexes"
+      row-key="index"
+      :dense="true"
+      :loading="loading"
+      :row-class="getRowClass"
+      @select-all="toggleSelectAll"
+      @select-row="handleRowSelect"
+    >
       <template #toolbar>
         <div class="table-status">
           <span>提示：操作按钮直接向当前标签页的内容脚本发送指令，请先确保标签页含有可播放的视频。</span>
         </div>
+        <BaseSearchBar
+          v-model="searchQuery"
+          :inputRef="searchInputEl"
+          :disabled="loading"
+          placeholder="搜索视频 (Ctrl+F)"
+          :hint="shortcutHint"
+          :show-hint="showShortcutHints"
+        />
       </template>
-      <thead>
-        <tr>
-          <th class="checkbox-col">
-            <input
-              type="checkbox"
-              class="table-checkbox"
-              :checked="allSelected"
-              :indeterminate="indeterminateSelected"
-              @change="handleSelectAllChange"
-              :disabled="loading || videos.length === 0"
-            />
-          </th>
-          <th style="width: 40px;">#</th>
-          <th>视频</th>
-          <th style="width: 140px;">规格</th>
-          <th style="width: 180px;">状态</th>
-          <th style="width: 340px;">操作</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-if="!loading && videos.length === 0">
-          <td colspan="6" class="empty-row">尚未识别到可控视频，请在含视频的页面中点击“重新扫描”。</td>
-        </tr>
-        <tr v-for="video in videos" :key="video.index" :class="{ 'row-new': newVideoHighlight.has(video.index) }">
-          <td class="checkbox-cell">
-            <input
-              type="checkbox"
-              class="table-checkbox"
-              :checked="isRowSelected(video.index)"
+      <template #header>
+        <th style="width: 40px;">#</th>
+        <th>视频</th>
+        <th style="width: 100px;">规格</th>
+        <th style="width: 80px;">下载状态</th>
+        <th style="width: 120px;">录制状态</th>
+        <th style="width: 240px;">操作</th>
+      </template>
+      <template #empty>尚未识别到可控视频，请在含视频的页面中点击“重新扫描”。</template>
+      <template #row="{ item: video }">
+        <td>#{{ (video.index ?? 0) + 1 }}</td>
+        <td>
+          <div class="video-meta">
+            <div class="video-meta__primary">{{ formatSource(video.src) }}</div>
+            <div class="video-meta__secondary">
+              <span>{{ renderVisibility(video) }}</span>
+              <span v-if="video.muted">静音</span>
+              <span v-if="directSourceCount(video) > 0">直链 {{ directSourceCount(video) }}</span>
+            </div>
+          </div>
+        </td>
+        <td>
+          <div>{{ formatResolution(video) }}</div>
+          <div class="video-meta__secondary">{{ formatDuration(video.duration) }}</div>
+        </td>
+        <td>
+          <span v-if="isDownloaded(video.src)" class="chip chip--success">已下载</span>
+          <span v-else class="chip chip--ghost">未下载</span>
+        </td>
+        <td>
+          <div class="status-badges">
+            <span class="chip" :class="{ 'chip--danger': recordingStates[video.index]?.lastError }">
+              {{ recordingLabel(video.index) }}
+            </span>
+            <span v-if="recordingStates[video.index]?.recording" class="recording-hint">
+              {{ recordingElapsed(video.index) }}
+            </span>
+          </div>
+        </td>
+        <td>
+          <div class="row-actions" style="justify-content: flex-end;">
+            <BaseButton
+              size="sm"
+              :variant="playbackStates[video.index] ? 'ghost' : 'secondary'"
               :disabled="loading"
-              @change="handleRowSelectChange(video.index, $event)"
-            />
-          </td>
-          <td>#{{ (video.index ?? 0) + 1 }}</td>
-          <td>
-            <div class="video-meta">
-              <div class="video-meta__primary">{{ formatSource(video.src) }}</div>
-              <div class="video-meta__secondary">
-                <span>{{ renderVisibility(video) }}</span>
-                <span v-if="video.muted">静音</span>
-                <span v-if="directSourceCount(video) > 0">直链 {{ directSourceCount(video) }}</span>
-              </div>
-            </div>
-          </td>
-          <td>
-            <div>{{ formatResolution(video) }}</div>
-            <div class="video-meta__secondary">{{ formatDuration(video.duration) }}</div>
-          </td>
-          <td>
-            <div class="status-badges">
-              <span class="chip" :class="{ 'chip--danger': recordingStates[video.index]?.lastError }">
-                {{ recordingLabel(video.index) }}
-              </span>
-              <span v-if="recordingStates[video.index]?.recording" class="recording-hint">
-                {{ recordingElapsed(video.index) }}
-              </span>
-            </div>
-          </td>
-          <td>
-            <div class="row-actions">
-              <BaseButton
-                size="sm"
-                variant="secondary"
-                :disabled="loading"
-                :loading="isActionBusy(video.index, 'play')"
-                @click="controlVideo(video.index, 'play')"
-              >播放</BaseButton>
-              <BaseButton
-                size="sm"
-                variant="ghost"
-                :disabled="loading"
-                :loading="isActionBusy(video.index, 'pause')"
-                @click="controlVideo(video.index, 'pause')"
-              >暂停</BaseButton>
-              <BaseButton
-                size="sm"
-                variant="ghost"
-                :disabled="loading"
-                :loading="isActionBusy(video.index, 'toggle')"
-                @click="controlVideo(video.index, 'toggle')"
-              >切换</BaseButton>
-              <BaseButton
-                size="sm"
-                :variant="recordingStates[video.index]?.recording ? 'danger' : 'secondary'"
-                :disabled="loading"
-                :loading="isActionBusy(video.index, recordingStates[video.index]?.recording ? 'record-stop' : 'record-start')"
-                @click="toggleRecording(video.index)"
-              >{{ recordingStates[video.index]?.recording ? '停止录制' : '开始录制' }}</BaseButton>
-              <BaseButton
-                size="sm"
-                variant="ghost"
-                :loading="isActionBusy(video.index, 'download')"
-                @click="downloadOriginal(video.index)"
-              >直链下载</BaseButton>
-            </div>
-            <div v-if="downloadErrors[video.index]" class="download-error" :title="downloadErrors[video.index]">下载失败</div>
-          </td>
-        </tr>
-      </tbody>
-    </BaseTable>
+              :loading="isActionBusy(video.index, playbackStates[video.index] ? 'pause' : 'play')"
+              @click="controlVideo(video.index, playbackStates[video.index] ? 'pause' : 'play')"
+            >{{ playbackStates[video.index] ? '暂停' : '播放' }}</BaseButton>
+            <BaseButton
+              size="sm"
+              :variant="recordingStates[video.index]?.recording ? 'danger' : 'secondary'"
+              :disabled="loading"
+              :loading="isActionBusy(video.index, recordingStates[video.index]?.recording ? 'record-stop' : 'record-start')"
+              @click="toggleRecording(video.index)"
+            >{{ recordingStates[video.index]?.recording ? '停止' : '录制' }}</BaseButton>
+            <BaseButton
+              size="sm"
+              variant="ghost"
+              :loading="isActionBusy(video.index, 'download')"
+              @click="downloadSingle(video.index)"
+            >下载</BaseButton>
+          </div>
+          <div v-if="downloadErrors[video.index]" class="download-error" :title="downloadErrors[video.index]">下载失败</div>
+        </td>
+      </template>
+    </SelectionTable>
   </BaseCard>
 </template>
 
 <script lang="ts">
 import { computed, defineComponent, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { fetchVideoSources, pickBestCandidate, triggerDirectVideoDownload } from '../services/videoSources';
-import { BaseButton, BaseCard, BaseTable } from '../components/base';
+import { useListSearch } from '../composables/useListSearch';
+import { BaseButton, BaseCard, BaseTable, SelectionTable, ErrorBadge, BaseSearchBar } from '../components/base';
+import { GLOBAL_SHORTCUT_HINT } from '../utils/shortcutHints';
 import { useResourceCounts } from '../composables/useResourceCounts';
+import { useRowHighlight } from '../composables/useRowHighlight';
 import {
   MessageType,
   type VideoControlAction,
@@ -187,8 +161,10 @@ import {
   type VideoPlaybackStatusMessage
 } from '@/messaging';
 import { subscribe, retryDownload, cancelDownload, type DownloadTask } from '../services/downloadQueue';
+import { loadHistory, isDownloaded, markDownloaded } from '../services/downloadHistory';
 import { loadState, saveState } from '../services/persist';
-import { getActiveTabInfo, sendMessageToTab, isReceivingEndMissingError, ensureContentConnected, getAllFramesInfo, type FrameInfo } from '../utils/chromeMessaging';
+import { loadSettings } from '../services/settings';
+import { getActiveTabInfo, sendMessageToTab, sendRuntimeMessage, isReceivingEndMissingError, ensureContentConnected, getAllFramesInfo, type FrameInfo } from '../utils/chromeMessaging';
 import { getRestrictedPageMessage } from '../utils/restrictedPages';
 
 interface RecordingState {
@@ -205,11 +181,20 @@ type RuntimeMessageListener = Parameters<typeof chrome.runtime.onMessage.addList
 
 export default defineComponent({
   name: 'VideoCapturePanel',
-  components: { BaseButton, BaseCard, BaseTable },
+  components: { BaseButton, BaseCard, SelectionTable, BaseSearchBar },
   setup() {
     const { setCount } = useResourceCounts();
     const videos = ref<VideoItemDTO[]>([]);
-    const newVideoHighlight = reactive(new Set<number>()); // 新增高亮集合
+    const { newSet: newVideoHighlight, removedSet: removedVideoHighlight, markNew: markVideoNew, markRemoved: markVideoRemoved } = useRowHighlight({ ttlNew: 2500, ttlRemoved: 900 });
+    const ephemeralRemovedVideos = reactive<Record<number, VideoItemDTO>>({});
+    const displayVideos = computed(() => {
+      const base = videos.value.slice();
+      Object.keys(ephemeralRemovedVideos).forEach(k => {
+        const id = Number(k);
+        if (!base.find(v => v.index === id)) base.push(ephemeralRemovedVideos[id]);
+      });
+      return base;
+    });
     const currentFrameId = ref<number|null>(null);
     const frameMode = ref<'auto'|'top'|'frame'>('auto');
     const frames = ref<FrameInfo[]>([]);
@@ -235,8 +220,24 @@ export default defineComponent({
     const minVideoWidth = ref<number>(0);
     const minVideoHeight = ref<number>(0);
     const minVideoDuration = ref<number>(0);
+    const filterDownloadStatus = ref<'all'|'downloaded'|'new'>('all');
     const sortKey = ref<string>(''); // width|height|duration|sources
     const sortDir = ref<'asc'|'desc'>('asc');
+    const searchKit = useListSearch<number>({
+      onRefresh: () => refreshVideoList(),
+      selectAll: () => { toggleSelectAll(true); },
+      clearSelection: () => { selectedIndexes.clear(); },
+      invertSelection: () => {
+        const all = videos.value.map(v => resolveIndex(v.index));
+        const next = new Set<number>();
+        for(const idx of all){ if(!selectedIndexes.has(idx)) next.add(idx); }
+        selectedIndexes.clear();
+        next.forEach(i => selectedIndexes.add(i));
+      },
+      selectNew: () => { newVideoHighlight.forEach(i => { if(typeof i === 'number') selectedIndexes.add(resolveIndex(i)); }); }
+    });
+    const showShortcutHints = ref(true);
+    const shortcutHint = GLOBAL_SHORTCUT_HINT;
     const clock = ref(Date.now());
     let timer: number | null = null;
     let removeRuntimeListener: (() => void) | null = null;
@@ -244,6 +245,7 @@ export default defineComponent({
     const videoCount = computed(() => videos.value.length);
     const allSelected = computed(() => videoCount.value > 0 && videos.value.every(v => selectedIndexes.has(resolveIndex(v.index))));
     const indeterminateSelected = computed(() => selectedIndexes.size > 0 && !allSelected.value);
+    const hasSelection = computed(() => selectedIndexes.size > 0);
     // 帧捕获相关状态
     const downloadErrors = reactive<Record<number, string>>({});
     const ensureBusy = ref(false);
@@ -303,14 +305,39 @@ export default defineComponent({
       if (message.type === MessageType.RESOURCE_UPDATE) {
         try {
           const payload: any = (message as any).payload || {};
-          if (Array.isArray(payload.videos)) {
-            const prevIds = new Set(videos.value.map(v=> v.index));
+          // frameId 守卫：列表展示的是单一 frame 的扫描结果（currentFrameId 为 null 表示顶层），
+          // 忽略来自其他 frame 的自动增量，防止跨 frame 列表互相覆盖（逐帧合并待后续版本）
+          const updFrameId = typeof payload.frameId === 'number' ? payload.frameId : 0;
+          if (updFrameId === (currentFrameId.value ?? 0) && Array.isArray(payload.videos)) {
+            const diff = payload.diff?.videos;
+            if (diff?.removed?.length) {
+              diff.removed.forEach((id: number) => {
+                const ex = videos.value.find(v => v.index === id);
+                if (ex) { ephemeralRemovedVideos[id] = { ...ex }; }
+              });
+              markVideoRemoved(diff.removed);
+              window.setTimeout(() => { diff.removed.forEach((id: number) => { delete ephemeralRemovedVideos[id]; }); }, 900);
+            }
             const incoming: VideoItemDTO[] = payload.videos;
             const filteredSorted = applyVideoFilterAndSort(incoming);
-            filteredSorted.forEach(v=> { if(!prevIds.has(v.index)) { newVideoHighlight.add(v.index); window.setTimeout(()=> newVideoHighlight.delete(v.index), 2500); } });
+            if (diff?.added?.length) {
+              markVideoNew(diff.added.map((v: VideoItemDTO) => v.index));
+            } else {
+              const prevIds = new Set(videos.value.map(v=> v.index));
+              const added = filteredSorted.filter(v => !prevIds.has(v.index)).map(v => v.index);
+              if (added.length) markVideoNew(added);
+            }
             videos.value = filteredSorted;
             setCount('video', videos.value.length);
             lastAction.value = '自动增量更新';
+          }
+        } catch { /* noop */ }
+      }
+      if (message.type === MessageType.SETTINGS_UPDATE) {
+        try {
+          const payload: any = (message as any).payload || {};
+          if (typeof payload.showShortcutHints === 'boolean') {
+            showShortcutHints.value = payload.showShortcutHints;
           }
         } catch { /* noop */ }
       }
@@ -334,6 +361,8 @@ export default defineComponent({
     });
 
     onMounted(async () => {
+      // 加载下载历史
+      await loadHistory();
       // 恢复帧间隔
       try {
         const st = await loadState();
@@ -342,14 +371,21 @@ export default defineComponent({
           if (typeof st.filters.video.minHeight === 'number') minVideoHeight.value = st.filters.video.minHeight;
           if (typeof st.filters.video.minDuration === 'number') minVideoDuration.value = st.filters.video.minDuration;
         }
-      } catch {}
-      void updateRestrictedHint();
+      } catch { /* noop */ }
+      // 加载显示快捷键提示设置
+      try { const s = await loadSettings(); showShortcutHints.value = s.showShortcutHints; } catch { /* noop */ }
+      await updateRestrictedHint();
+      // 如果是受限页面，直接跳过后续操作
+      if (restrictedHint.value) {
+        loading.value = false;
+        return;
+      }
       // 开启视频相关功能：播放事件与 SPA 监听
       try {
         const info = await getActiveTabInfo();
         const tabId = info?.id;
         if (tabId) { void sendMessageToTab<any>(tabId, { type: MessageType.ENABLE_FEATURES, payload: { video: true, playbackEvents: true, spaWatchers: true } }, {}); }
-      } catch {}
+      } catch { /* noop */ }
       refreshVideoList();
       timer = window.setInterval(() => {
         clock.value = Date.now();
@@ -362,9 +398,30 @@ export default defineComponent({
       }
       // 订阅下载队列
       const unsubscribeQueue = subscribe(tasks => { queueTasks.value = tasks; });
+      
+      // 监听标签页切换：自动重新检测受限状态并刷新
+      const onTabActivated = async () => {
+        await updateRestrictedHint();
+        if (!restrictedHint.value) {
+          error.value = null;
+          await refreshVideoList();
+        }
+      };
+      if (chrome?.tabs?.onActivated?.addListener) {
+        chrome.tabs.onActivated.addListener(onTabActivated);
+      }
+      
       removeRuntimeListener = ((orig)=>{
-        return () => { orig && orig(); unsubscribeQueue(); };
+        return () => {
+          orig && orig();
+          unsubscribeQueue();
+          if (chrome?.tabs?.onActivated?.removeListener) {
+            chrome.tabs.onActivated.removeListener(onTabActivated);
+          }
+        };
       })(removeRuntimeListener);
+      // 注册全局快捷键
+      searchKit.register();
     });
     function onFrameModeChange(){
       const v = frameModeValue.value;
@@ -376,31 +433,13 @@ export default defineComponent({
     function formatFrameLabel(f: FrameInfo){
       const id = f.frameId;
       let host = '';
-      try { if(f.url){ const u = new URL(f.url); host = u.hostname.replace(/^www\./,'') + (u.pathname && u.pathname!=="/" ? ' · '+ (u.pathname.length>20 ? (u.pathname.slice(0,20)+'…') : u.pathname) : ''); } } catch {}
+      try { if(f.url){ const u = new URL(f.url); host = u.hostname.replace(/^www\./,'') + (u.pathname && u.pathname!=="/" ? ' · '+ (u.pathname.length>20 ? (u.pathname.slice(0,20)+'…') : u.pathname) : ''); } } catch { /* noop */ }
       return host ? `#${id} ${host}` : `#${id}`;
     }
-    function renderTaskStatus(t: DownloadTask){
-      switch(t.status){
-        case 'pending': return t.retries && t.retries>0 ? `排队(重试${t.retries})` : '排队';
-        case 'running': {
-          const pct = typeof t.progress === 'number' ? Math.round(t.progress*100) : undefined;
-          const base = pct!=null ? `下载中 ${pct}%` : '下载中';
-          return t.retries && t.retries>0 ? `${base}·重试${t.retries}` : base;
-        }
-        case 'completed': return '完成';
-        case 'error': return '失败';
-        case 'canceled': return '已取消';
-        default: return t.status;
-      }
-    }
+
     function retryTask(id: string){ retryDownload(id); }
     function cancelTask(id: string){ cancelDownload(id); }
 
-    function canOfferFallback(t: DownloadTask){
-      if (t.status !== 'error') return false;
-      if (t.kind !== 'video') return false;
-      return t.errorCode === 'DRM' || t.errorCode === 'CORS' || t.errorCode === 'PERMISSION';
-    }
     async function fallbackRecord(t: DownloadTask){
       const vid = videos.value.find(v => v.src === t.url || (v.directSources||[]).some(s=> s.url === t.url));
       const idx = vid ? vid.index : videos.value[0]?.index;
@@ -409,51 +448,14 @@ export default defineComponent({
       catch { lastAction.value = '录制回退失败'; }
     }
 
-    function mapErrorCode(code?: string){
-      switch(code){
-        case 'DRM': return 'DRM受限';
-        case 'CORS': return '跨域';
-        case 'PERMISSION': return '权限';
-        case 'NO_RESOURCE': return '缺失';
-        case 'NETWORK': return '网络';
-        case 'INTERRUPTED': return '中断';
-        case 'UNKNOWN': return '未知';
-        default: return '错误';
-      }
-    }
-    function renderErrorHint(t: DownloadTask){
-      if (!t.errorCode) return t.error || '未知错误';
-      const base = mapErrorCode(t.errorCode);
-      const tail = t.error ? `: ${t.error}` : '';
-      switch(t.errorCode){
-        case 'DRM': return base + ' — 视频资源受 DRM 保护，可尝试录制方式'+tail;
-        case 'CORS': return base + ' — 跨域限制，需同源获取或使用录制'+tail;
-        case 'PERMISSION': return base + ' — 权限/403，可能需要登录或授权'+tail;
-        case 'NO_RESOURCE': return base + ' — 资源不存在或失效'+tail;
-        case 'NETWORK': return base + ' — 网络失败，可重试'+tail;
-        case 'INTERRUPTED': return base + ' — 下载被中断，可重试'+tail;
-        default: return base + tail;
-      }
-    }
-
     function toggleSelectAll(checked: boolean){
       selectedIndexes.clear();
       if(checked){ videos.value.forEach(v => selectedIndexes.add(resolveIndex(v.index))); }
     }
-    function handleSelectAllChange(event: Event){
-      const target = event.target as HTMLInputElement | null;
-      if(!target) return;
-      toggleSelectAll(target.checked);
-    }
-    function isRowSelected(rawIndex?: number){
-      return selectedIndexes.has(resolveIndex(rawIndex));
-    }
-    function handleRowSelectChange(rawIndex: number | undefined, event: Event){
-      const target = event.target as HTMLInputElement | null;
-      if(!target) return;
-      const idx = resolveIndex(rawIndex);
-      if(target.checked){ selectedIndexes.add(idx); }
-      else { selectedIndexes.delete(idx); }
+    function handleRowSelect(index: number) {
+      const idx = resolveIndex(index);
+      if(selectedIndexes.has(idx)) selectedIndexes.delete(idx);
+      else selectedIndexes.add(idx);
     }
 
     function toggleRecording(index?: number){
@@ -473,6 +475,8 @@ export default defineComponent({
       if (removeRuntimeListener) {
         removeRuntimeListener();
       }
+      // 清理全局快捷键
+      searchKit.unregister();
     });
     async function refreshVideoList() {
       loading.value = true;
@@ -481,7 +485,7 @@ export default defineComponent({
       try {
         const tabId = await ensureActiveTab();
         // 刷新帧列表（用于下拉）
-        try { frames.value = await getAllFramesInfo(tabId); } catch {}
+        try { frames.value = await getAllFramesInfo(tabId); } catch { /* noop */ }
         let list: VideoItemDTO[] = [];
         let usedFrame: number | null = null;
         if (frameMode.value === 'top') {
@@ -509,9 +513,9 @@ export default defineComponent({
                     usedFrame = fid;
                     break;
                   }
-                } catch {}
+                } catch { /* noop */ }
               }
-            } catch {}
+            } catch { /* noop */ }
           }
         }
         currentFrameId.value = usedFrame;
@@ -528,6 +532,11 @@ export default defineComponent({
         Object.keys(playbackStates).forEach(k=>{ const i = Number(k); if(!existing.has(i)) delete playbackStates[i]; });
         Object.keys(recordingStates).forEach(k=>{ const i = Number(k); if(!existing.has(i)) delete recordingStates[i]; });
       } catch (err) {
+        // 若是受限页面错误，restrictedHint 已展示，不再重复存入 error
+        if (restrictedHint.value) {
+          loading.value = false;
+          return;
+        }
         // 自动修复：若是接收端缺失，尝试注入后重试一次
         try {
           if (isReceivingEndMissingError(err)) {
@@ -536,7 +545,7 @@ export default defineComponent({
             if (res.ok) {
               // 再次尝试
               const tabId2 = tabId;
-              try { frames.value = await getAllFramesInfo(tabId2); } catch {}
+              try { frames.value = await getAllFramesInfo(tabId2); } catch { /* noop */ }
               let list: VideoItemDTO[] = [];
               let usedFrame: number | null = null;
               if (frameMode.value === 'top') {
@@ -559,9 +568,9 @@ export default defineComponent({
                       try {
                         const r = await sendMessageToTab<VideoListResponse>(tabId2, { type: MessageType.GET_VIDEO_LIST }, { frameId: fid });
                         if (r?.success && Array.isArray(r.videos) && r.videos.length) { list = r.videos; usedFrame = fid; break; }
-                      } catch {}
+                      } catch { /* noop */ }
                     }
-                  } catch {}
+                  } catch { /* noop */ }
                 }
               }
               currentFrameId.value = usedFrame;
@@ -572,11 +581,14 @@ export default defineComponent({
               return;
             }
           }
-        } catch {}
+        } catch { /* noop */ }
         // 最终失败
         videos.value = [];
         setCount('video', 0);
-        error.value = toFriendlyVideoError(err);
+        // 受限页面已通过 restrictedHint 展示，不重复设置 error
+        if (!restrictedHint.value) {
+          error.value = toFriendlyVideoError(err);
+        }
       } finally {
         loading.value = false;
       }
@@ -591,7 +603,7 @@ export default defineComponent({
           throw new Error(res.error || `连接失败（已检查 ${res.framesChecked} 帧）`);
         }
         lastAction.value = `连接成功（${res.framesConnected}/${res.framesChecked}）`;
-        try { frames.value = await getAllFramesInfo(tabId); } catch {}
+        try { frames.value = await getAllFramesInfo(tabId); } catch { /* noop */ }
         await refreshVideoList();
       }catch(e:any){ error.value = e?.message || '重试连接失败'; }
       finally{ ensureBusy.value=false; }
@@ -731,7 +743,7 @@ export default defineComponent({
       else busyKeys.delete(key);
     }
 
-    async function downloadOriginal(index: number) {
+    async function downloadSingle(index: number) {
       const resolvedIndex = resolveIndex(index);
       const key = actionKey(resolvedIndex, 'download');
       setBusy(key, true);
@@ -741,13 +753,63 @@ export default defineComponent({
         if(!sources.length) throw new Error('无直链');
         const candidate = pickBestCandidate(sources);
         if(!candidate) throw new Error('无有效直链');
+
+        // Check for blob URL
+        if (candidate.url.startsWith('blob:')) {
+           throw new Error('Blob 视频无法直接下载，请使用录制功能');
+        }
+
+        // 分段流提示：HLS/DASH 直链只是播放清单，直接下载无法得到完整视频
+        if (candidate.kind === 'hls' || candidate.kind === 'dash') {
+          if (candidate.kind === 'hls') {
+            // HLS：走分片下载+合并链路（队列内展示进度）
+            const resp: any = await sendRuntimeMessage({ type: MessageType.START_HLS_DOWNLOAD, payload: { url: candidate.url } });
+            if (resp?.success) {
+              lastAction.value = '已加入 HLS 下载队列（分片下载并自动合并）';
+              return;
+            }
+            throw new Error(resp?.error || 'HLS 任务创建失败');
+          }
+          lastAction.value = '该视频为 DASH 分段流，暂不支持直链下载，建议使用录制';
+          return;
+        }
+
         const res = await triggerDirectVideoDownload(resolvedIndex, candidate, meta||{});
-        if(!res.success) throw new Error(res.error||'下载失败');
+        if(!res.success) {
+          if (res.error && res.error.includes('SERVER_FORBIDDEN')) {
+             throw new Error('服务器拒绝访问 (403)，请尝试使用录制功能');
+          }
+          throw new Error(res.error||'下载失败');
+        }
+        
+        // 标记为已下载
+        const video = videos.value.find(v => v.index === resolvedIndex);
+        if (video && video.src) {
+          await markDownloaded(video.src);
+        }
+        
         lastAction.value = '已触发视频下载';
       } catch(e:any){
         downloadErrors[resolvedIndex] = e?.message || String(e);
-        error.value = '直链下载失败';
+        error.value = e?.message || '直链下载失败';
       } finally { setBusy(key,false); }
+    }
+
+    async function downloadSelected() {
+      if (!selectedIndexes.size) return;
+      const indexes = Array.from(selectedIndexes);
+      lastAction.value = `开始批量下载 ${indexes.length} 个视频`;
+      
+      for (const idx of indexes) {
+        try {
+          await downloadSingle(idx);
+          // 简单的间隔防止请求过快
+          await new Promise(r => setTimeout(r, 500));
+        } catch (e) {
+          console.error(`Failed to download video ${idx}`, e);
+        }
+      }
+      lastAction.value = '批量下载完成';
     }
 
     async function updateRestrictedHint(){
@@ -785,8 +847,6 @@ export default defineComponent({
           return '已触发播放';
         case 'pause':
           return '已触发暂停';
-        case 'toggle':
-          return '已切换播放状态';
         default:
           return '已执行操作';
       }
@@ -797,6 +857,32 @@ export default defineComponent({
         if(minVideoWidth.value && (!v.width || v.width < minVideoWidth.value)) return false;
         if(minVideoHeight.value && (!v.height || v.height < minVideoHeight.value)) return false;
         if(minVideoDuration.value && (!v.duration || v.duration < minVideoDuration.value)) return false;
+        
+        // 下载状态过滤
+        if (filterDownloadStatus.value !== 'all') {
+          const downloaded = isDownloaded(v.src);
+          if (filterDownloadStatus.value === 'downloaded' && !downloaded) return false;
+          if (filterDownloadStatus.value === 'new' && downloaded) return false;
+        }
+
+        if(searchKit.searchQuery.value){
+          const q = searchKit.searchQuery.value.trim().toLowerCase();
+          if(q){
+            let hit = false;
+            if(v.src){
+              try {
+                const u = new URL(v.src, 'https://placeholder.local');
+                const host = u.hostname.replace(/^www\./,'');
+                const path = u.pathname;
+                if(host.toLowerCase().includes(q) || path.toLowerCase().includes(q)) hit = true;
+              } catch { if(v.src.toLowerCase().includes(q)) hit = true; }
+            }
+            if(!hit && Array.isArray(v.directSources)){
+              for(const ds of v.directSources){ if(ds.url && ds.url.toLowerCase().includes(q)){ hit=true; break; } }
+            }
+            if(!hit) return false;
+          }
+        }
         return true;
       });
       if(!sortKey.value) return filtered;
@@ -830,7 +916,7 @@ export default defineComponent({
     });
 
     async function batchControl(action: VideoControlAction){
-      const flagMap: Record<VideoControlAction,string> = { play:'playAll', pause:'pauseAll', toggle:'toggleAll' } as any;
+      const flagMap: Record<VideoControlAction,string> = { play:'playAll', pause:'pauseAll' } as any;
       const flag = flagMap[action];
       if(flag) globalBusy[flag] = true;
       try {
@@ -840,18 +926,42 @@ export default defineComponent({
     }
     function playAll(){ batchControl('play'); }
     function pauseAll(){ batchControl('pause'); }
-    function toggleAll(){ batchControl('toggle'); }
+
+    const allPaused = computed(() => {
+      if (videos.value.length === 0) return true;
+      // 只要有一个在播放，就认为不是“全暂停”，按钮应显示“暂停”
+      return !videos.value.some(v => playbackStates[resolveIndex(v.index)]);
+    });
+
+    function togglePlayAll() {
+      if (allPaused.value) {
+        playAll();
+      } else {
+        pauseAll();
+      }
+    }
+
     async function startRecordAll(){ globalBusy.recordAllStart = true; try { for(const v of videos.value){ if(!recordingStates[v.index]?.recording) await startRecording(v.index); } lastAction.value='批量启动录制'; } finally { globalBusy.recordAllStart=false; } }
     async function stopRecordAll(){ globalBusy.recordAllStop = true; try { for(const v of videos.value){ if(recordingStates[v.index]?.recording) await stopRecording(v.index); } lastAction.value='批量停止录制'; } finally { globalBusy.recordAllStop=false; } }
 
+    function getRowClass(video: VideoItemDTO) {
+      return {
+        'row-new': newVideoHighlight.has(video.index),
+        'row-removed': removedVideoHighlight.has(video.index)
+      };
+    }
+
     return {
       videos,
+      displayVideos,
       newVideoHighlight,
+      removedVideoHighlight,
       videoCount,
       loading,
       error,
       lastAction,
       recordingStates,
+      playbackStates,
       refreshVideoList,
       controlVideo,
       startRecording,
@@ -862,48 +972,55 @@ export default defineComponent({
       renderVisibility,
       allSelected,
       indeterminateSelected,
-      handleSelectAllChange,
-      handleRowSelectChange,
-      isRowSelected,
+      hasSelection,
+      toggleSelectAll,
       toggleRecording,
       directSourceCount,
       recordingLabel,
       recordingElapsed,
       isActionBusy,
-      downloadOriginal,
+      downloadSingle,
+      downloadSelected,
       downloadErrors,
       playbackSummary,
       playAll,
       pauseAll,
-      toggleAll,
+      togglePlayAll,
+      allPaused,
       startRecordAll,
       stopRecordAll,
       anyRecording,
-      globalBusy
-      ,queueTasks
-      ,renderTaskStatus
-      ,retryTask
-      ,cancelTask
-      ,minVideoWidth
-      ,minVideoHeight
-      ,minVideoDuration
-      ,sortKey
-      ,sortDir
-      ,toggleSort
-      ,applyVideoFilter
-      ,ensureBusy
-      ,ensureConnectAndRefresh
-      ,frameMode
-      ,frames
-      ,frameModeValue
-      ,onFrameModeChange
-      ,formatFrameLabel
-      ,adapterId
-      ,restrictedHint
-      ,mapErrorCode
-      ,renderErrorHint
-      ,canOfferFallback
-      ,fallbackRecord
+      globalBusy,
+      queueTasks,
+      retryTask,
+      cancelTask,
+      minVideoWidth,
+      minVideoHeight,
+      minVideoDuration,
+      filterDownloadStatus,
+      isDownloaded,
+      sortKey,
+      sortDir,
+      toggleSort,
+      applyVideoFilter,
+      searchQuery: searchKit.searchQuery,
+      searchInputEl: searchKit.searchInputRef,
+      focusSearch: searchKit.focusSearch,
+      ensureBusy,
+      ensureConnectAndRefresh,
+      frameMode,
+      frames,
+      frameModeValue,
+      onFrameModeChange,
+      formatFrameLabel,
+      adapterId,
+      restrictedHint,
+      fallbackRecord,
+      shortcutHint,
+      showShortcutHints,
+      getRowClass,
+      selectedIndexes,
+      handleRowSelect
     };
   }
 });
@@ -944,110 +1061,138 @@ function toFriendlyVideoError(err: unknown) {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: var(--sp-spacing-4);
+  margin-bottom: 10px;
   flex-wrap: wrap;
-  gap: var(--sp-spacing-3);
+  gap: 6px;
 }
 
 .toolbar__left {
   display: flex;
   align-items: center;
-  gap: var(--sp-spacing-3);
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .toolbar__hint {
-  font-size: 13px;
+  font-size: 11px;
   color: var(--sp-color-muted);
 }
 
 .toolbar__right {
   display: flex;
-  gap: var(--sp-spacing-3);
+  gap: 6px;
   align-items: center;
 }
 
-.status {
-  color: var(--sp-color-muted);
-  font-size: 13px;
-}
+.status { color: var(--sp-color-muted); font-size: 11px; }
+.status--error { color: var(--sp-color-danger); }
 
-.status--error {
-  color: var(--sp-color-danger);
-}
-
-.global-video-bar { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; margin-bottom: var(--sp-spacing-4); gap: var(--sp-spacing-3); }
-.global-video-bar__left { display:flex; gap: var(--sp-spacing-2); flex-wrap:wrap; }
-.global-video-bar__right { display:flex; align-items:center; }
-.global-summary { font-size:12px; color: var(--sp-color-muted); }
-.download-queue { border:1px solid var(--sp-color-border); border-radius:6px; padding:8px 10px; margin-bottom: var(--sp-spacing-4); background: var(--sp-color-bg-subtle); }
-.download-queue__header { font-size:12px; font-weight:600; margin-bottom:6px; color: var(--sp-color-heading); }
-.download-queue__list { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:4px; max-height:180px; overflow:auto; }
-.dq-item { display:flex; align-items:center; gap:8px; font-size:12px; }
-.dq-name { flex:1; word-break:break-all; }
-.dq-status { width:52px; text-align:center; }
-.dq-progress { flex:0 0 100px; }
-.dq-error { color: var(--sp-color-danger); font-size:11px; }
-.dq-actions { display:flex; gap:4px; }
-.bar { position:relative; display:block; width:100%; height:6px; background:#ddd; border-radius:3px; overflow:hidden; }
-.bar__inner { position:absolute; top:0; left:0; bottom:0; background: var(--sp-color-primary); width:0; transition: width .3s; }
-.dq-running .dq-status { color: var(--sp-color-primary); }
-.dq-completed .dq-status { color: var(--sp-color-success, #16a34a); }
-.dq-error .dq-status { color: var(--sp-color-danger); }
-.dq-canceled .dq-status { color: var(--sp-color-muted); }
-
-.checkbox-col,
-.checkbox-cell {
-  width: 42px;
-  text-align: center;
-}
-
-.checkbox-cell {
-  padding: var(--sp-spacing-2);
-}
-
-.table-checkbox {
-  width: 16px;
-  height: 16px;
+.frame-select {
+  height: 28px;
+  padding: 0 8px;
+  background: var(--sp-color-surface);
+  border: 1px solid var(--sp-color-border-strong);
+  border-radius: var(--sp-radius-sm);
+  color: var(--sp-color-text);
+  font-size: 11px;
+  font-family: var(--sp-font-family);
+  outline: none;
   cursor: pointer;
+  max-width: 160px;
+}
+
+.global-video-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+  gap: 6px;
+  padding: 8px 12px;
+  background: var(--sp-color-surface);
+  border: 1px solid var(--sp-color-border);
+  border-radius: var(--sp-radius-md);
+}
+
+.global-video-bar__left {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.global-video-bar__right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.global-summary {
+  font-size: 11px;
+  color: var(--sp-color-muted);
+}
+
+.filter-select {
+  height: 26px;
+  padding: 0 7px;
+  background: var(--sp-color-bg-elevated);
+  border: 1px solid var(--sp-color-border-strong);
+  border-radius: var(--sp-radius-sm);
+  color: var(--sp-color-text);
+  font-size: 11px;
+  font-family: var(--sp-font-family);
+  outline: none;
 }
 
 .table-status {
+  font-size: 11px;
   color: var(--sp-color-muted);
-  font-size: 13px;
 }
 
 .empty-row {
   text-align: center;
   color: var(--sp-color-muted);
-  padding: var(--sp-spacing-4);
+  padding: 24px;
+  font-size: 12px;
 }
+
 .row-new { animation: rowNewFade 2.4s ease-in forwards; }
-@keyframes rowNewFade { 0% { background: rgba(79,156,255,0.55); } 60% { background: rgba(79,156,255,0.25); } 100% { background: transparent; } }
+.row-removed { animation: rowRemovedFade 0.9s ease-out forwards; }
+
+@keyframes rowNewFade {
+  0% { background: rgba(59, 138, 255, 0.3); }
+  100% { background: transparent; }
+}
+@keyframes rowRemovedFade {
+  0% { background: rgba(239, 68, 68, 0.3); }
+  100% { background: transparent; opacity: 0; }
+}
 
 .video-meta__primary {
-  font-weight: 600;
+  font-size: 11px;
+  font-weight: 500;
   color: var(--sp-color-heading);
   word-break: break-all;
 }
 
 .video-meta__secondary {
   display: flex;
-  gap: var(--sp-spacing-2);
+  gap: 6px;
   flex-wrap: wrap;
   color: var(--sp-color-muted);
-  font-size: 12px;
+  font-size: 11px;
+  margin-top: 1px;
 }
 
 .row-actions {
   display: flex;
-  gap: var(--sp-spacing-2);
+  gap: 4px;
   flex-wrap: wrap;
-  margin-bottom: var(--sp-spacing-2);
 }
 
 .status-badges {
   display: flex;
-  gap: var(--sp-spacing-2);
+  gap: 4px;
   align-items: center;
   flex-wrap: wrap;
 }
@@ -1055,41 +1200,71 @@ function toFriendlyVideoError(err: unknown) {
 .chip {
   display: inline-flex;
   align-items: center;
-  padding: 4px 8px;
+  padding: 2px 7px;
   border-radius: 999px;
-  background: rgba(79, 156, 255, 0.15);
+  font-size: 11px;
+  font-weight: 600;
+  background: rgba(59, 138, 255, 0.10);
   color: var(--sp-color-primary);
-  font-size: 12px;
 }
 
-.chip--danger {
-  background: rgba(248, 113, 113, 0.15);
-  color: var(--sp-color-danger);
-}
+.chip--success { background: var(--sp-color-success-light); color: var(--sp-color-success); }
+.chip--ghost { background: var(--sp-color-bg-subtle); color: var(--sp-color-muted); }
+.chip--danger { background: var(--sp-color-danger-light); color: var(--sp-color-danger); }
 
 .recording-hint {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--sp-color-muted);
+  font-family: var(--sp-font-mono, monospace);
 }
 
 .restricted-banner {
-  margin-bottom: var(--sp-spacing-4);
-  padding: 10px 12px;
-  border-radius: 6px;
-  background: rgba(248, 186, 34, 0.15);
-  color: #8a5300;
-  font-size: 13px;
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border-radius: var(--sp-radius-md);
+  background: var(--sp-color-warning-light);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  color: var(--sp-color-warning);
+  font-size: 11px;
+  line-height: 1.4;
 }
 
-@media (max-width: 720px) {
-  .toolbar {
-    flex-direction: column;
-    align-items: flex-start;
-  }
+.restricted-banner span {
+  flex: 1;
+}
 
-  .row-actions {
-    flex-direction: column;
-    align-items: stretch;
-  }
+.banner-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--sp-color-warning);
+  opacity: 0.6;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 1px;
+  transition: opacity var(--sp-transition-fast);
+}
+
+.banner-close:hover {
+  opacity: 1;
+}
+
+.download-error {
+  font-size: 11px;
+  color: var(--sp-color-danger);
+  margin-top: 2px;
+}
+
+input[type='checkbox'] {
+  width: 13px;
+  height: 13px;
+  accent-color: var(--sp-color-primary);
+  cursor: pointer;
 }
 </style>

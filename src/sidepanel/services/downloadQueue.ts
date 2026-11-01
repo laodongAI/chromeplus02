@@ -1,5 +1,7 @@
 import { MessageType, type DownloadQueueSnapshotMessage, type DownloadProgressEventMessage, type DownloadQueueActionMessage } from '@/messaging';
 import { sendRuntimeMessage } from '../utils/chromeMessaging';
+import { addHistoryRecord } from './downloadHistory';
+import { ensureHlsBlobDownloadListener } from './hlsBlobDownload';
 
 export interface DownloadTask {
   id: string;
@@ -72,6 +74,7 @@ function applySnapshot(tasks: SnapshotTaskShape[]) {
   tasks.forEach(src => {
     const existing = map.get(src.id);
     if (existing) {
+      const wasCompleted = existing.status === 'completed';
       existing.status = src.status as DownloadTask['status'];
       existing.progress = src.progress;
       existing.error = src.error;
@@ -82,8 +85,50 @@ function applySnapshot(tasks: SnapshotTaskShape[]) {
       existing.speedBps = src.speedBps;
       existing.etaSeconds = src.etaSeconds;
       existing.retries = src.retries ?? existing.retries;
+      
+      if (!wasCompleted && existing.status === 'completed') {
+        addHistoryRecord({
+          id: existing.id,
+          url: existing.url,
+          filename: existing.fileName,
+          kind: existing.kind || 'other',
+          status: 'success',
+          size: existing.totalBytes
+        });
+      } else if (existing.status === 'error' && existing.error) {
+        addHistoryRecord({
+          id: existing.id,
+          url: existing.url,
+          filename: existing.fileName,
+          kind: existing.kind || 'other',
+          status: 'failed',
+          error: existing.error,
+          size: existing.totalBytes
+        });
+      }
     } else {
-      queue.push({ id: src.id, url: src.url, fileName: src.fileName, kind: (src.kind as DownloadTask['kind']) || 'image', messageType: undefined, retries: src.retries ?? 0, status: src.status as DownloadTask['status'], progress: src.progress, error: src.error, errorCode: src.errorCode });
+      const newTask: DownloadTask = { id: src.id, url: src.url, fileName: src.fileName, kind: (src.kind as DownloadTask['kind']) || 'image', messageType: undefined, retries: src.retries ?? 0, status: src.status as DownloadTask['status'], progress: src.progress, error: src.error, errorCode: src.errorCode };
+      queue.push(newTask);
+      if (newTask.status === 'completed') {
+        addHistoryRecord({
+          id: newTask.id,
+          url: newTask.url,
+          filename: newTask.fileName,
+          kind: newTask.kind || 'other',
+          status: 'success',
+          size: newTask.totalBytes
+        });
+      } else if (newTask.status === 'error' && newTask.error) {
+        addHistoryRecord({
+          id: newTask.id,
+          url: newTask.url,
+          filename: newTask.fileName,
+          kind: newTask.kind || 'other',
+          status: 'failed',
+          error: newTask.error,
+          size: newTask.totalBytes
+        });
+      }
     }
   });
   // 移除已不存在任务（后台已清理）
@@ -126,6 +171,8 @@ let progressListenerAttached = false;
 function ensureRuntimeProgressListener(){
   if (progressListenerAttached) return;
   if (!chrome?.runtime?.onMessage?.addListener) return;
+  // HLS 产物接收（Blob 经 IDB 从 SW 交接）
+  ensureHlsBlobDownloadListener();
   const handler: Parameters<typeof chrome.runtime.onMessage.addListener>[0] = (message) => {
     if (!message || !message.type) return;
     if (message.type === MessageType.DOWNLOAD_PROGRESS_EVENT) {
@@ -154,39 +201,4 @@ function ensureRuntimeProgressListener(){
   };
   chrome.runtime.onMessage.addListener(handler);
   progressListenerAttached = true;
-}
-
-// 增加中央并发控制逻辑
-const MAX_CONCURRENT_DOWNLOADS = 3;
-let activeDownloads = 0;
-
-function processQueue() {
-  if (activeDownloads >= MAX_CONCURRENT_DOWNLOADS) return;
-  const nextTask = queue.find(t => t.status === 'pending');
-  if (!nextTask) return;
-
-  nextTask.status = 'running';
-  activeDownloads++;
-  emitUpdate();
-
-  sendRuntimeMessage({ type: MessageType.DOWNLOAD_QUEUE_ACTION, action: 'start', id: nextTask.id })
-    .then(() => {
-      nextTask.status = 'completed';
-      nextTask.finishedAt = Date.now();
-    })
-    .catch(err => {
-      nextTask.status = 'error';
-      nextTask.error = err.message;
-    })
-    .finally(() => {
-      activeDownloads--;
-      processQueue();
-      emitUpdate();
-    });
-}
-
-export function addDownloadWithConcurrency(url: string, fileName: string | undefined, kind: DownloadTask['kind'], messageType?: MessageType | string) {
-  addDownload(url, fileName, kind, messageType).then(id => {
-    if (id) processQueue();
-  });
 }

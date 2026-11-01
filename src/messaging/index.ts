@@ -7,6 +7,8 @@ export enum MessageType {
   // 握手
   PING = 'PING',
   PONG = 'PONG',
+  // 内容脚本自识别（后台回传 sender.frameId/tabId）
+  WHO_AM_I = 'WHO_AM_I',
   // 功能开关
   ENABLE_FEATURES = 'ENABLE_FEATURES',
   // 设置更新
@@ -30,6 +32,11 @@ export enum MessageType {
   DOWNLOAD_QUEUE_SNAPSHOT = 'DOWNLOAD_QUEUE_SNAPSHOT',
   DOWNLOAD_PROGRESS_EVENT = 'DOWNLOAD_PROGRESS_EVENT'
   , RESOURCE_UPDATE = 'RESOURCE_UPDATE'
+  // HLS(m3u8) 分片下载
+  , START_HLS_DOWNLOAD = 'START_HLS_DOWNLOAD'
+  , HLS_BLOB_READY = 'HLS_BLOB_READY'
+  // 文本
+  , GET_TEXT_CONTENT = 'GET_TEXT_CONTENT'
 }
 
 export interface PongMessage {
@@ -90,6 +97,7 @@ export interface DownloadQueueSnapshotMessage {
     url: string;
     fileName?: string;
     kind?: string;
+    engine?: 'direct' | 'hls';
     status: string;
     progress?: number;
     error?: string;
@@ -116,7 +124,7 @@ export interface ImageItemDTO {
   kind?: string; // img|source|background
 }
 
-export type VideoControlAction = 'play' | 'pause' | 'toggle';
+export type VideoControlAction = 'play' | 'pause';
 
 export interface VideoSourceCandidate {
   url: string;
@@ -135,12 +143,14 @@ export interface VideoItemDTO {
   visible?: boolean;
   directSources?: VideoSourceCandidate[];
   directSourceCount?: number;
+  paused?: boolean;
 }
 
 export interface VideoListResponse {
   success: boolean;
   error?: string;
   videos?: VideoItemDTO[];
+  frameId?: number;
 }
 
 export interface VideoRecordingStatusMessage {
@@ -161,7 +171,7 @@ export interface VideoPlaybackStatusMessage {
 }
 
 export interface VideoSourcesResponse {
-  sources: { url: string; mimeType?: string; extension?: string; size?: number; via?: string }[];
+  sources: { url: string; mimeType?: string; extension?: string; size?: number; via?: string; kind?: 'video' | 'audio' | 'hls' | 'dash' }[];
   meta?: Record<string, any>;
 }
 
@@ -172,14 +182,33 @@ export interface SettingsUpdateMessage {
     namingTemplate?: string;
     autoScan?: boolean;
     maxConcurrent?: number;
+    showShortcutHints?: boolean;
   };
 }
 
 export interface ResourceUpdateMessage {
   type: MessageType.RESOURCE_UPDATE;
   payload: {
+    /** 发送本条增量的内容脚本所在 frameId（0 = 顶层窗口） */
+    frameId?: number;
     images?: { url: string; width?: number; height?: number; kind?: string }[];
     audio?: { url: string; title?: string }[];
     videos?: { index: number; src?: string; width?: number; height?: number; duration?: number; muted?: boolean; visible?: boolean }[];
+    diff?: {
+      images?: { added: { url: string; width?: number; height?: number; kind?: string }[]; removed: string[] };
+      audio?: { added: { url: string; title?: string }[]; removed: string[] };
+      videos?: { added: { index: number; src?: string; width?: number; height?: number; duration?: number; muted?: boolean; visible?: boolean }[]; removed: number[] };
+    };
   };
+}
+
+export interface TextContentDTO {
+  title: string;
+  description?: string;
+  keywords?: string[];
+  author?: string;
+  textContent: string;
+  htmlContent?: string;
+  wordCount: number;
+  meta?: Record<string, any>;
 }
