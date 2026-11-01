@@ -11,6 +11,7 @@
  */
 
 import { parseM3U8, pickBestVariant, type M3u8Byterange, type M3u8ParseResult } from '@/core/m3u8';
+import { parseMPD, pickBestDashVideo } from '@/core/mpd';
 import { detectMergeType, mergeSegments, concatBytes, type HlsMergeType } from '@/core/hlsMerge';
 import { canRemux, remuxTsToMp4 } from '@/core/tsRemux';
 import { STORE_HLS_SEGMENTS, STORE_HLS_BLOBS, idbPut, idbGet, idbGetAllKeys, idbDeleteByPrefix } from '@/shared/blobStore';
@@ -101,6 +102,38 @@ async function fetchPlaylist(url: string): Promise<M3u8ParseResult> {
   if (!resp.ok) throw new Error(`清单请求失败: ${resp.status}`);
   const text = await resp.text();
   return parseM3U8(text, url);
+}
+
+/** DASH(mpd) → HlsTaskMeta：复用分片下载/合并管道（fMP4 init+分片拼接） */
+export async function prepareDashTask(mpdUrl: string): Promise<HlsTaskMeta> {
+  const resp = await fetch(mpdUrl, { credentials: 'include' });
+  if (!resp.ok) throw new Error(`清单请求失败: ${resp.status}`);
+  const text = await resp.text();
+  const parsed = parseMPD(text, mpdUrl);
+  if (parsed.isDynamic) throw new Error('直播 DASH 暂不支持下载');
+  if (parsed.unsupported.length) throw new Error(`暂不支持的 MPD 特性: ${parsed.unsupported.join('、')}`);
+  const best = pickBestDashVideo(parsed.videoRepresentations);
+  if (!best) throw new Error('未解析到可下载的视频轨');
+  // 音视频分轨：无合流能力时拒绝，避免产出无声视频
+  if (parsed.audioRepresentations.length > 0) {
+    throw new Error('该 DASH 为音视频分离流，下载视频轨将无声，建议使用录制兜底');
+  }
+  return {
+    playlistUrl: mpdUrl,
+    segments: best.segments,
+    sequences: best.segments.map((_, i) => i),
+    byteranges: best.segments.map(() => undefined),
+    initSegment: best.initialization,
+    mergeType: 'fmp4',
+    totalDuration: parsed.durationSeconds,
+    segTotal: best.segments.length
+  };
+}
+
+/** 按清单类型自动分发：mpd → DASH，其余按 m3u8 处理 */
+export async function prepareMediaTask(url: string): Promise<HlsTaskMeta> {
+  if (/\.mpd(?:$|[?#])/i.test(url)) return prepareDashTask(url);
+  return prepareHlsTask(url);
 }
 
 /**

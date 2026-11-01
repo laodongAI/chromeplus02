@@ -40,6 +40,7 @@
         <BaseButton size="sm" variant="secondary" :disabled="loading || !hasSelection" @click="downloadSelected">下载选中</BaseButton>
         <BaseButton size="sm" variant="ghost" :disabled="!displayVideos.length" @click="exportCsv">导出CSV</BaseButton>
         <BaseButton size="sm" variant="ghost" :disabled="!displayVideos.length" @click="exportJson">导出JSON</BaseButton>
+        <BaseButton size="sm" variant="ghost" :disabled="!hasSelection" @click="addSelectedToBasket">加入收集篮</BaseButton>
         <select class="frame-select" v-model="filterDownloadStatus" :disabled="loading">
           <option value="all">全部状态</option>
           <option value="new">未下载</option>
@@ -164,6 +165,8 @@ import {
 } from '@/messaging';
 import { subscribe, retryDownload, cancelDownload, type DownloadTask } from '../services/downloadQueue';
 import { exportRowsAsJSON, exportRowsAsCSV, formatDuration } from '../services/exportList';
+import { addToBasket } from '../services/collection';
+import { toast } from '../composables/useToast';
 import { loadHistory, isDownloaded, markDownloaded } from '../services/downloadHistory';
 import { loadState, saveState } from '../services/persist';
 import { loadSettings } from '../services/settings';
@@ -762,19 +765,14 @@ export default defineComponent({
            throw new Error('Blob 视频无法直接下载，请使用录制功能');
         }
 
-        // 分段流提示：HLS/DASH 直链只是播放清单，直接下载无法得到完整视频
+        // 分段流：HLS 走分片下载+合并链路；DASH 交给后台解析（分轨流会给出明确拒绝原因）
         if (candidate.kind === 'hls' || candidate.kind === 'dash') {
-          if (candidate.kind === 'hls') {
-            // HLS：走分片下载+合并链路（队列内展示进度）
-            const resp: any = await sendRuntimeMessage({ type: MessageType.START_HLS_DOWNLOAD, payload: { url: candidate.url } });
-            if (resp?.success) {
-              lastAction.value = '已加入 HLS 下载队列（分片下载并自动合并）';
-              return;
-            }
-            throw new Error(resp?.error || 'HLS 任务创建失败');
+          const resp: any = await sendRuntimeMessage({ type: MessageType.START_HLS_DOWNLOAD, payload: { url: candidate.url } });
+          if (resp?.success) {
+            lastAction.value = candidate.kind === 'hls' ? '已加入 HLS 下载队列（分片下载并自动合并）' : '已加入 DASH 下载队列（解析分片后自动合并）';
+            return;
           }
-          lastAction.value = '该视频为 DASH 分段流，暂不支持直链下载，建议使用录制';
-          return;
+          throw new Error(resp?.error || '分段流任务创建失败');
         }
 
         const res = await triggerDirectVideoDownload(resolvedIndex, candidate, meta||{});
@@ -952,6 +950,16 @@ export default defineComponent({
         'row-new': newVideoHighlight.has(video.index),
         'row-removed': removedVideoHighlight.has(video.index)
       };
+    }
+
+    // ===== 收集篮 =====
+    async function addSelectedToBasket() {
+      const items = displayVideos.value
+        .filter(v => selectedIndexes.has(v.index))
+        .map(v => ({ kind: 'video' as const, url: v.src || v.directSources?.[0]?.url || '', title: (v.src || '').split('/').pop()?.split('?')[0] || `视频${v.index}` }));
+      const n = await addToBasket(items.filter(i => i.url));
+      if (n > 0) toast.success(`已加入收集篮 ${n} 项`);
+      else toast.info('选中项均已在收集篮中');
     }
 
     // ===== 清单导出（当前筛选+排序后的列表） =====

@@ -9,7 +9,7 @@
 import { MessageType, type StartDownloadPayload } from '@/messaging';
 import { formatFilename } from '@/utils/format';
 import { registerBgHandler } from './bus';
-import { prepareHlsTask, runHlsDownload, hlsAbort, isAbortError, type HlsTaskMeta } from './hls';
+import { prepareMediaTask, runHlsDownload, hlsAbort, isAbortError, type HlsTaskMeta } from './hls';
 
 // 内部任务结构（后台统一管理队列）
 interface BgDownloadTask {
@@ -273,7 +273,7 @@ async function runTask(task: BgDownloadTask) {
   try {
     if (task.engine === 'hls') {
       // HLS：解析清单 → 分片并发下载 → 合并 → Blob 交接侧边栏保存
-      const meta = (task.hls && task.hls.segTotal) ? task.hls : await prepareHlsTask(task.url);
+      const meta = (task.hls && task.hls.segTotal) ? task.hls : await prepareMediaTask(task.url);
       task.hls = meta;
       broadcastProgress(task);
       const base = stripExt(task.fileName || 'video') || 'video';

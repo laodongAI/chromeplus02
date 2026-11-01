@@ -63,6 +63,8 @@ import { BaseCard, BaseButton } from '../components/base';
 import { loadHistory, getHistoryList, clearHistory, type HistoryItem } from '../services/downloadHistory';
 import { addDownload } from '../services/downloadQueue';
 import { formatBytes } from '@/utils/format';
+import { confirmDialog } from '../composables/useConfirm';
+import { toast } from '../composables/useToast';
 
 export default defineComponent({
   name: 'DownloadManagerPanel',
@@ -91,9 +93,11 @@ export default defineComponent({
     });
 
     async function clearAll() {
-      if (confirm('确定要清除所有下载历史吗？')) {
+      const ok = await confirmDialog({ title: '清除下载历史', message: '将移除全部下载记录（不删除已下载文件），不可恢复。', danger: true, confirmText: '清除' });
+      if (ok) {
         await clearHistory();
         historyList.value = [];
+        toast.success('下载历史已清除');
       }
     }
 

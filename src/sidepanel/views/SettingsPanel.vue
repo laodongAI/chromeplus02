@@ -197,6 +197,8 @@ import { loadSettings, saveSettings, type ExtensionSettings } from '../services/
 import { getHistoryCount, clearHistory, loadHistory } from '../services/downloadHistory';
 import { sendRuntimeMessage } from '../utils/chromeMessaging';
 import { MessageType } from '@/messaging';
+import { confirmDialog } from '../composables/useConfirm';
+import { toast } from '../composables/useToast';
 
 export default defineComponent({
   name: 'SettingsPanel',
@@ -220,9 +222,11 @@ export default defineComponent({
     });
 
     async function handleClearHistory() {
-      if (confirm('确定要清除所有下载历史记录吗？此操作不可恢复。')) {
+      const ok = await confirmDialog({ title: '清除下载历史', message: '将移除全部下载记录（不删除已下载文件），不可恢复。', danger: true, confirmText: '清除' });
+      if (ok) {
         await clearHistory();
         historyCount.value = getHistoryCount();
+        toast.success('下载历史已清除');
       }
     }
 

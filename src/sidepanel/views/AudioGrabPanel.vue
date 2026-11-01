@@ -20,6 +20,7 @@
       <div class="toolbar__right">
         <BaseButton size="sm" variant="ghost" :disabled="!displayAudioItems.length" @click="exportCsv">导出CSV</BaseButton>
         <BaseButton size="sm" variant="ghost" :disabled="!displayAudioItems.length" @click="exportJson">导出JSON</BaseButton>
+        <BaseButton size="sm" variant="ghost" :disabled="!hasSelection" @click="addSelectedToBasket">加入收集篮</BaseButton>
         <BaseButton size="sm" :disabled="!hasSelection || bulkDownloading" :loading="bulkDownloading" @click="downloadSelected">
           下载所选 ({{ selectedCount }})
         </BaseButton>
@@ -125,6 +126,8 @@ import { useResourceCounts } from '../composables/useResourceCounts';
 import { MessageType, type AudioItemDTO } from '@/messaging';
 import { addDownload, subscribe, retryDownload, cancelDownload, type DownloadTask } from '../services/downloadQueue';
 import { exportRowsAsJSON, exportRowsAsCSV } from '../services/exportList';
+import { addToBasket } from '../services/collection';
+import { toast } from '../composables/useToast';
 import { loadHistory, isDownloaded } from '../services/downloadHistory';
 import { loadState, saveState } from '../services/persist';
 import { loadSettings } from '../services/settings';
@@ -302,7 +305,7 @@ export default defineComponent({
     async function copyLink(url: string) {
       try {
         await navigator.clipboard.writeText(url);
-        lastAction.value = '已复制链接';
+        lastAction.value = '已复制链接'; toast.success('已复制链接');
       } catch (err) {
         error.value = '复制失败，请手动选择文本';
         console.error(err);
@@ -741,6 +744,16 @@ export default defineComponent({
         'row-new': newAudioHighlight.has(item.url),
         'row-removed': removedAudioHighlight.has(item.url)
       };
+    }
+
+    // ===== 收集篮 =====
+    async function addSelectedToBasket() {
+      const items = displayAudioItems.value
+        .filter(a => selected.has(a.url))
+        .map(a => ({ kind: 'audio' as const, url: a.url, title: a.title || undefined }));
+      const n = await addToBasket(items.filter(i => i.url));
+      if (n > 0) toast.success(`已加入收集篮 ${n} 项`);
+      else toast.info('选中项均已在收集篮中');
     }
 
     // ===== 清单导出 =====

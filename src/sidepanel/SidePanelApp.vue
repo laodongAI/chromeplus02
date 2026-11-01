@@ -13,24 +13,35 @@
     </header>
 
     <nav class="tab-nav">
-      <button
-        v-for="tab in tabs"
-        :key="tab.key"
-        class="tab-btn"
-        :class="{ 'is-active': tab.key === activeTab, 'tab-btn--launch': tab.launch }"
-        :style="tab.key === activeTab ? { '--tab-color': tab.color, '--tab-bg': tab.bgColor } : {}"
-        @click="tab.launch ? launchEditor() : switchTab(tab.key)"
-        :title="tab.description"
-      >
-        <span class="tab-btn__icon" v-html="tab.icon"></span>
-        <span class="tab-btn__label">{{ tab.label }}</span>
-        <span v-if="tab.launch" class="tab-btn__ext-icon">
-          <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-        </span>
-        <span class="tab-btn__count" v-if="(counts[tab.metric] ?? 0) > 0 && !tab.launch" :style="{ background: tab.color }">
-          {{ counts[tab.metric] ?? 0 }}
-        </span>
-      </button>
+      <div class="tab-groups">
+        <button
+          v-for="g in groups"
+          :key="g.key"
+          class="group-btn"
+          :class="{ 'is-active': g.key === activeGroup.key }"
+          @click="switchGroup(g)"
+        >{{ g.label }}</button>
+      </div>
+      <div class="tab-row">
+        <button
+          v-for="tab in visibleTabs"
+          :key="tab.key"
+          class="tab-btn"
+          :class="{ 'is-active': tab.key === activeTab, 'tab-btn--launch': tab.launch }"
+          :style="tab.key === activeTab ? { '--tab-color': tab.color, '--tab-bg': tab.bgColor } : {}"
+          @click="tab.launch ? launchEditor() : switchTab(tab.key)"
+          :title="tab.description"
+        >
+          <span class="tab-btn__icon" v-html="tab.icon"></span>
+          <span class="tab-btn__label">{{ tab.label }}</span>
+          <span v-if="tab.launch" class="tab-btn__ext-icon">
+            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+          </span>
+          <span class="tab-btn__count" v-if="(counts[tab.metric] ?? 0) > 0 && !tab.launch" :style="{ background: tab.color }">
+            {{ counts[tab.metric] ?? 0 }}
+          </span>
+        </button>
+      </div>
     </nav>
 
     <main class="app-body">
@@ -49,6 +60,9 @@
         </template>
       </Suspense>
     </main>
+
+    <BaseToast />
+    <BaseConfirm />
   </div>
 </template>
 
@@ -56,6 +70,8 @@
 import { computed, ref, defineAsyncComponent } from 'vue';
 import { provideResourceCounts } from './composables/useResourceCounts';
 import GlobalDownloadBar from './components/GlobalDownloadBar.vue';
+import BaseToast from './components/base/BaseToast.vue';
+import BaseConfirm from './components/base/BaseConfirm.vue';
 
 const AsyncVideoCapturePanel    = defineAsyncComponent(() => import('./views/VideoCapturePanel.vue'));
 const AsyncImageGrabPanel       = defineAsyncComponent(() => import('./views/ImageGrabPanel.vue'));
@@ -66,8 +82,10 @@ const AsyncSourcesDownloadPanel = defineAsyncComponent(() => import('./views/Sou
 const AsyncSettingsPanel        = defineAsyncComponent(() => import('./views/SettingsPanel.vue'));
 const AsyncScreenRecordPanel    = defineAsyncComponent(() => import('./views/ScreenRecordPanel.vue'));
 const AsyncVideoEditorPanel     = defineAsyncComponent(() => import('./views/VideoEditorPanel.vue'));
+const AsyncCollectionPanel      = defineAsyncComponent(() => import('./views/CollectionPanel.vue'));
 
-type TabKey = 'video'|'image'|'audio'|'text'|'downloads'|'sources'|'settings'|'screenrec'|'editor';
+type TabKey = 'video'|'image'|'audio'|'text'|'downloads'|'sources'|'settings'|'screenrec'|'editor'|'basket';
+type GroupKey = 'grab' | 'tools' | 'manage' | 'system';
 
 const tabs = [
   { key:'video'     as TabKey, label:'视频',   description:'识别并控制页面视频，支持录制与抓帧',    metric:'video'     as TabKey, color:'#6366f1', bgColor:'rgba(99,102,241,0.08)',  component:AsyncVideoCapturePanel,
@@ -80,6 +98,8 @@ const tabs = [
     icon:`<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>` },
   { key:'downloads' as TabKey, label:'下载',   description:'查看下载历史与任务状态',               metric:'downloads' as TabKey, color:'#06b6d4', bgColor:'rgba(6,182,212,0.08)',   component:AsyncDownloadManagerPanel,
     icon:`<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>` },
+  { key:'basket'    as TabKey, label:'收集篮', description:'跨页面暂存资源，统一下载或导出',        metric:'basket'    as TabKey, color:'#f97316', bgColor:'rgba(249,115,22,0.08)',  component:AsyncCollectionPanel,
+    icon:`<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>` },
   { key:'sources'   as TabKey, label:'Sources',description:'下载页面资源文件并保持目录结构',        metric:'sources'   as TabKey, color:'#ec4899', bgColor:'rgba(236,72,153,0.08)',  component:AsyncSourcesDownloadPanel,
     icon:`<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>` },
   { key:'screenrec' as TabKey, label:'录屏',   description:'录制屏幕、窗口或标签页',               metric:'screenrec' as TabKey, color:'#ef4444', bgColor:'rgba(239,68,68,0.08)',   component:AsyncScreenRecordPanel,
@@ -95,7 +115,20 @@ const editorFiles = ref<{ name: string; blob: Blob; url: string }[]>([]);
 const { counts } = provideResourceCounts();
 const activeComponent = computed(() => tabs.find(t => t.key === activeTab.value)?.component || AsyncVideoCapturePanel);
 
+// ── 分组导航：降低 10 个平级 Tab 的认知负担（UX-MULTI-TAB-001） ──
+const groups: { key: GroupKey; label: string; tabs: TabKey[] }[] = [
+  { key: 'grab',   label: '抓取', tabs: ['video', 'image', 'audio', 'text'] },
+  { key: 'tools',  label: '工具', tabs: ['sources', 'screenrec', 'editor'] },
+  { key: 'manage', label: '管理', tabs: ['downloads', 'basket'] },
+  { key: 'system', label: '系统', tabs: ['settings'] }
+];
+const activeGroup = computed(() => groups.find(g => g.tabs.includes(activeTab.value)) || groups[0]);
+const visibleTabs = computed(() => tabs.filter(t => activeGroup.value.tabs.includes(t.key)));
+
 function switchTab(key: TabKey) { activeTab.value = key; }
+function switchGroup(g: { key: GroupKey; tabs: TabKey[] }) {
+  if (!g.tabs.includes(activeTab.value)) activeTab.value = g.tabs[0];
+}
 
 /** 在当前窗口的当前标签页左侧打开全屏编辑器（通过 chrome.tabs.create 在同窗口新标签打开） */
 function launchEditor(clips?: { name: string; url: string }[]) {
@@ -163,17 +196,46 @@ function openInEditor(rec: { name: string; blob: Blob; url: string }) {
   border-radius: 999px;
 }
 
-/* ── Tab Nav ── */
+/* ── Tab Nav（分组：组行 + 当前组 Tab 行） ── */
 .tab-nav {
   display: flex;
+  flex-direction: column;
   background: var(--sp-color-bg-elevated);
   border-bottom: 1px solid var(--sp-color-border);
-  overflow-x: auto;
   flex-shrink: 0;
+}
+
+.tab-groups {
+  display: flex;
+  gap: 2px;
+  padding: 6px 8px 0;
+}
+
+.group-btn {
+  padding: 3px 10px;
+  border: none;
+  border-radius: var(--sp-radius-full);
+  background: transparent;
+  color: var(--sp-color-muted);
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--sp-font-family);
+  cursor: pointer;
+  transition: all var(--sp-transition-fast);
+}
+.group-btn:hover { color: var(--sp-color-text); background: var(--sp-color-surface); }
+.group-btn.is-active {
+  color: var(--sp-color-primary);
+  background: var(--sp-color-primary-light);
+}
+
+.tab-row {
+  display: flex;
+  overflow-x: auto;
   scrollbar-width: none;
   gap: 0;
 }
-.tab-nav::-webkit-scrollbar { display: none; }
+.tab-row::-webkit-scrollbar { display: none; }
 
 .tab-btn {
   display: flex;

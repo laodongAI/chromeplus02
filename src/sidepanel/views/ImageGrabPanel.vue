@@ -27,6 +27,7 @@
       <div class="toolbar__right">
         <BaseButton size="sm" variant="ghost" :disabled="!displayImages.length" @click="exportCsv">导出CSV</BaseButton>
         <BaseButton size="sm" variant="ghost" :disabled="!displayImages.length" @click="exportJson">导出JSON</BaseButton>
+        <BaseButton size="sm" variant="ghost" :disabled="!hasSelection" @click="addSelectedToBasket">加入收集篮</BaseButton>
         <BaseButton size="sm" :disabled="!hasSelection" @click="downloadSelected">批量下载 ({{ selectedCount }})</BaseButton>
       </div>
     </div>
@@ -132,6 +133,8 @@ import { loadSettings } from '../services/settings';
 import { addDownload, subscribe, retryDownload, cancelDownload, type DownloadTask } from '../services/downloadQueue';
 import { loadHistory, isDownloaded } from '../services/downloadHistory';
 import { exportRowsAsJSON, exportRowsAsCSV } from '../services/exportList';
+import { addToBasket } from '../services/collection';
+import { toast } from '../composables/useToast';
 import { startFrameCapture, stopFrameCapture, isFrameCaptureActive, getFrameIntervalSeconds, type CapturedFrame } from '../services/frameCapture';
 import { getActiveTabInfo, sendMessageToTab, ensureContentConnected, getAllFramesInfo, getAllFrameIds, isReceivingEndMissingError, type FrameInfo } from '../utils/chromeMessaging';
 import { getRestrictedPageMessage } from '../utils/restrictedPages';
@@ -436,7 +439,7 @@ export default defineComponent({
     async function downloadSelected(){ let count=0; for(const key of selected){ const img = images.value.find(i=>i.key===key); if(!img || isProcessed(img.key)) continue; markProcessed(img.key); processedKeys.add(img.key); addDownload(img.url, undefined, 'image', 'DIRECT_DOWNLOAD_GENERIC'); count++; } lastAction.value = `队列新增 ${count} 条`; }
 
     function onImgLoad(img: RawImageItem){ if(!img.phash){ try { img.phash = computePerceptualHash((event!.target as HTMLImageElement)); img.key = buildUnifiedMediaKey(img); } catch (_) { /* noop */ } } }
-    function copyLink(url: string){ navigator.clipboard.writeText(url).then(()=> lastAction.value='已复制链接').catch(()=> error.value='复制失败'); }
+    function copyLink(url: string){ navigator.clipboard.writeText(url).then(()=> { lastAction.value='已复制链接'; toast.success('已复制链接'); }).catch(()=> error.value='复制失败'); }
     function shorten(url: string){ return url.length>64 ? url.slice(0,64)+'…' : url; }
 
     onMounted(async ()=>{
@@ -670,6 +673,16 @@ export default defineComponent({
         'row-new': newHighlightSet.has(img.key),
         'row-removed': removedHighlightSet.has(img.key)
       };
+    }
+
+    // ===== 收集篮 =====
+    async function addSelectedToBasket() {
+      const items = displayImages.value
+        .filter(i => selected.has(i.key))
+        .map(i => ({ kind: 'image' as const, url: i.url, width: i.width, height: i.height }));
+      const n = await addToBasket(items.filter(i => i.url));
+      if (n > 0) toast.success(`已加入收集篮 ${n} 项`);
+      else toast.info('选中项均已在收集篮中');
     }
 
     // ===== 清单导出 =====

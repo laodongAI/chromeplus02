@@ -15,6 +15,7 @@ function downloadBlob(blob: Blob, fileName: string): void {
       void chrome.runtime.lastError;
       setTimeout(() => { try { URL.revokeObjectURL(url); } catch { /* noop */ } }, 60_000);
     });
+    import('../composables/useToast').then(({ toast }) => toast.success(`已导出 ${fileName}`)).catch(() => { /* noop */ });
   } catch (e) {
     console.warn('[export] 触发下载失败:', e);
   }
