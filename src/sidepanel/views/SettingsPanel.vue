@@ -81,8 +81,11 @@
         <div class="setting-row setting-row--vertical">
           <div class="setting-row__label">服务提供商</div>
           <select class="setting-input" v-model="state.ai.provider" @change="onProviderChange">
+            <option value="zhipu">智谱 GLM（含免费模型）</option>
             <option value="openai">OpenAI / 兼容接口</option>
             <option value="deepseek">DeepSeek</option>
+            <option value="moonshot">月之暗面 Kimi</option>
+            <option value="qwen">通义千问 Qwen</option>
             <option value="anthropic">Anthropic Claude</option>
             <option value="gemini">Google Gemini</option>
             <option value="custom">自定义接口</option>
@@ -261,26 +264,40 @@ export default defineComponent({
     });
 
     function onProviderChange() {
-      const presets: Record<string, { baseUrl: string; model: string }> = {
-        openai:    { baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
+      // 各家均提供 OpenAI 兼容端点（chat/completions）；whisperModel 为语音转文字模型名
+      const presets: Record<string, { baseUrl: string; model: string; whisperModel?: string }> = {
+        zhipu:     { baseUrl: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4-flash', whisperModel: 'glm-asr' },
+        openai:    { baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini', whisperModel: 'whisper-1' },
         deepseek:  { baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
+        moonshot:  { baseUrl: 'https://api.moonshot.cn/v1', model: 'moonshot-v1-8k' },
+        qwen:      { baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-turbo' },
         anthropic: { baseUrl: 'https://api.anthropic.com/v1', model: 'claude-3-5-haiku-20241022' },
         gemini:    { baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-1.5-flash' },
         custom:    { baseUrl: '', model: '' },
       };
       const p = presets[state.ai.provider];
-      if (p) { state.ai.baseUrl = p.baseUrl; state.ai.model = p.model; }
+      if (p) {
+        state.ai.baseUrl = p.baseUrl;
+        state.ai.model = p.model;
+        if (p.whisperModel) state.ai.whisperModel = p.whisperModel;
+      }
     }
 
     async function testAI() {
       testingAI.value = true; testResult.value = { ok: false, msg: '' };
+      const base = state.ai.baseUrl.replace(/\/$/, '');
+      const headers = { 'Authorization': `Bearer ${state.ai.apiKey}`, 'Content-Type': 'application/json' };
       try {
-        const resp = await fetch(`${state.ai.baseUrl.replace(/\/$/, '')}/models`, {
-          headers: { 'Authorization': `Bearer ${state.ai.apiKey}`, 'Content-Type': 'application/json' }
+        // 首选 /models；部分兼容端点（如智谱）不列出免费模型，回退最小对话探测
+        const resp = await fetch(`${base}/models`, { headers });
+        if (resp.ok) { testResult.value = { ok: true, msg: '连接成功 ✓' }; return; }
+        const chat = await fetch(`${base}/chat/completions`, {
+          method: 'POST', headers,
+          body: JSON.stringify({ model: state.ai.model, messages: [{ role: 'user', content: 'ping' }], max_tokens: 1 })
         });
-        testResult.value = resp.ok
-          ? { ok: true,  msg: '连接成功 ✓' }
-          : { ok: false, msg: `HTTP ${resp.status}` };
+        testResult.value = chat.ok
+          ? { ok: true, msg: `连接成功 ✓（/models 不可用，对话探测通过 ${resp.status}）` }
+          : { ok: false, msg: `HTTP ${resp.status} / ${chat.status}` };
       } catch (e: any) {
         testResult.value = { ok: false, msg: e?.message ?? '连接失败' };
       } finally { testingAI.value = false; }

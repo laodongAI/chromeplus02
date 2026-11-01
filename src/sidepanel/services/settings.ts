@@ -5,7 +5,7 @@
 import { sendRuntimeMessage } from '../utils/chromeMessaging';
 
 export interface AIModelConfig {
-  provider: 'openai' | 'anthropic' | 'gemini' | 'deepseek' | 'custom';
+  provider: 'openai' | 'anthropic' | 'gemini' | 'deepseek' | 'zhipu' | 'moonshot' | 'qwen' | 'custom';
   apiKey: string;
   baseUrl: string;        // 自定义端点（兼容 OpenAI 格式）
   model: string;          // 模型名称
