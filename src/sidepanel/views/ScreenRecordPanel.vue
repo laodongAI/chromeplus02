@@ -7,7 +7,7 @@
         <span class="rec-label">录制中</span>
         <span class="rec-timer">{{ timerDisplay }}</span>
       </div>
-      <div class="annot-hint" v-if="annotTabId != null">✏️ 页面画笔已开启：录制画面顶部有工具栏（矩形/直线/箭头/画笔/撤销/清空），画的内容会录进视频</div>
+      <div class="annot-hint" v-if="annotTabId != null">✏️ 黑板画笔已开启：默认就是画笔，直接在页面上手写涂画；工具栏可切换 文字/矩形/直线/箭头、颜色与粗细。注意：只能在浏览器页面内绘制（会录进视频），桌面/其他应用窗口无法画</div>
       <div class="recording-info" v-if="selectedSource">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>
@@ -204,6 +204,8 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue';
 import { MessageType } from '@/messaging';
+import { sendMessageToTab } from '../utils/chromeMessaging';
+import { toast } from '../composables/useToast';
 
 interface SourceItem {
   id: number | string;
@@ -364,7 +366,7 @@ async function startRecording() {
 
     mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
 
-    // 开启页面画笔覆盖层（画面内容会被录进视频）
+    // 开启页面画笔覆盖层（走自动注入通道：页面在扩展重载前打开也能出现工具栏）
     try {
       let targetTabId: number | undefined;
       if (sourceType.value === 'tab' && selectedSource.value) {
@@ -375,9 +377,12 @@ async function startRecording() {
       }
       if (targetTabId != null && Number.isFinite(targetTabId)) {
         annotTabId.value = targetTabId;
-        await chrome.tabs.sendMessage(targetTabId, { type: MessageType.ANNOTATE_TOGGLE, payload: { active: true } }).catch(() => {});
+        // frameId: 0 → 只在顶层 frame 创建覆盖层（避免 iframe 重复弹工具栏）
+        await sendMessageToTab(targetTabId, { type: MessageType.ANNOTATE_TOGGLE, payload: { active: true } }, { frameId: 0 });
       }
-    } catch { /* 画笔开启失败不影响录制 */ }
+    } catch {
+      toast.info('该页面不支持画笔工具（浏览器内部页，或页面需刷新后重试）');
+    }
     mediaRecorder.onstop = () => finalizeRecording();
     mediaRecorder.start(1000); // 每秒切片
 
@@ -416,7 +421,9 @@ async function closeAnnotate() {
   const tabId = annotTabId.value;
   annotTabId.value = undefined;
   if (tabId == null) return;
-  try { await chrome.tabs.sendMessage(tabId, { type: MessageType.ANNOTATE_TOGGLE, payload: { active: false } }).catch(() => {}); } catch { /* noop */ }
+  try {
+    await sendMessageToTab(tabId, { type: MessageType.ANNOTATE_TOGGLE, payload: { active: false } }, { frameId: 0 });
+  } catch { /* noop */ }
 }
 
 function stopRecording() {

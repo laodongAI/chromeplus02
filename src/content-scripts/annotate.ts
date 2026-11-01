@@ -6,14 +6,15 @@
  */
 
 interface Point { x: number; y: number }
-interface Shape { tool: 'rect' | 'line' | 'arrow' | 'pen'; color: string; width: number; points: Point[] }
+interface Shape { tool: 'rect' | 'line' | 'arrow' | 'pen' | 'text'; color: string; width: number; points: Point[]; text?: string }
 
 const COLORS = ['#ef4444', '#f59e0b', '#22c55e', '#3b82f6', '#ffffff'];
 const TOOLS: { key: Shape['tool']; label: string }[] = [
+  { key: 'pen', label: '✎ 画笔' },
+  { key: 'text', label: 'T 文字' },
   { key: 'rect', label: '▭ 矩形' },
   { key: 'line', label: '╱ 直线' },
-  { key: 'arrow', label: '↗ 箭头' },
-  { key: 'pen', label: '✎ 画笔' }
+  { key: 'arrow', label: '↗ 箭头' }
 ];
 
 let root: HTMLDivElement | null = null;
@@ -21,7 +22,7 @@ let canvas: HTMLCanvasElement | null = null;
 let toolbar: HTMLDivElement | null = null;
 let shapes: Shape[] = [];
 let current: Shape | null = null;
-let tool: Shape['tool'] = 'rect';
+let tool: Shape['tool'] = 'pen';
 let color = COLORS[0];
 let lineWidth = 4;
 let selectMode = false;
@@ -31,6 +32,14 @@ function css(el: HTMLElement, style: Partial<CSSStyleDeclaration>): void {
 }
 
 function drawShape(c: CanvasRenderingContext2D, s: Shape): void {
+  if (s.tool === 'text') {
+    if (!s.text) return;
+    c.fillStyle = s.color;
+    c.font = `bold ${s.width * 5 + 10}px sans-serif`;
+    c.textBaseline = 'top';
+    c.fillText(s.text, s.points[0].x, s.points[0].y);
+    return;
+  }
   if (s.points.length < 2 && s.tool !== 'pen') return;
   c.strokeStyle = s.color;
   c.fillStyle = s.color;
@@ -185,6 +194,10 @@ export function toggleAnnotate(on: boolean): void {
   const pt = (e: PointerEvent): Point => ({ x: e.clientX, y: e.clientY });
   canvas.addEventListener('pointerdown', (e) => {
     if (selectMode) return;
+    if (tool === 'text') {
+      openTextInput(pt(e));
+      return;
+    }
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
     current = { tool, color, width: lineWidth, points: [pt(e)] };
     redraw();
@@ -202,6 +215,44 @@ export function toggleAnnotate(on: boolean): void {
   };
   canvas.addEventListener('pointerup', finish);
   canvas.addEventListener('pointercancel', finish);
+
+  function openTextInput(anchor: Point): void {
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.placeholder = '输入文字，回车确认';
+    css(input, {
+      position: 'fixed',
+      left: `${anchor.x}px`,
+      top: `${Math.max(4, anchor.y - 14)}px`,
+      zIndex: '2147483647',
+      pointerEvents: 'auto',
+      background: 'rgba(20,22,29,0.95)',
+      color: color,
+      border: `1px solid ${color}`,
+      borderRadius: '6px',
+      padding: '4px 8px',
+      fontSize: '14px',
+      fontWeight: '600',
+      outline: 'none',
+      width: '240px'
+    });
+    const commit = () => {
+      const text = input.value.trim();
+      if (text) {
+        shapes.push({ tool: 'text', color, width: lineWidth, points: [anchor], text });
+        redraw();
+      }
+      input.remove();
+    };
+    input.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') commit();
+      if (ev.key === 'Escape') input.remove();
+      ev.stopPropagation();
+    });
+    input.addEventListener('blur', commit);
+    root!.appendChild(input);
+    setTimeout(() => input.focus(), 0);
+  }
 
   window.addEventListener('resize', resize);
   resize();
