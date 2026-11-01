@@ -8,6 +8,7 @@
         <option value="image">图片</option>
       </select>
       <div class="filter-row__right">
+        <BaseButton size="sm" variant="ghost" :disabled="!displayList.length" :loading="aiBusy" @click="aiFillTitles">AI 补全标题</BaseButton>
         <BaseButton size="sm" variant="ghost" :disabled="!displayList.length" @click="exportCsv">导出CSV</BaseButton>
         <BaseButton size="sm" variant="ghost" :disabled="!displayList.length" @click="exportJson">导出JSON</BaseButton>
         <BaseButton size="sm" variant="ghost" :disabled="!displayList.length" @click="onClear">清空</BaseButton>
@@ -50,8 +51,10 @@ import { basketState, subscribeBasket, addToBasket, removeFromBasket, clearBaske
 import { addDownload } from '../services/downloadQueue';
 import { isDownloaded } from '../services/downloadHistory';
 import { exportRowsAsJSON, exportRowsAsCSV } from '../services/exportList';
+import { aiSuggestTitles } from '../services/aiAssist';
 import { confirmDialog } from '../composables/useConfirm';
 import { toast } from '../composables/useToast';
+import { ref as vueRef } from 'vue';
 import { useResourceCounts } from '../composables/useResourceCounts';
 
 type BasketKind = BasketItem['kind'];
@@ -124,6 +127,24 @@ export default defineComponent({
         toast.success('收集篮已清空');
       }
     }
+    const aiBusy = vueRef(false);
+    async function aiFillTitles() {
+      if (aiBusy.value) return;
+      // 只补全无标题或标题像文件名/URL 的条目
+      const targets = displayList.value
+        .filter(i => !i.title || /\.(mp4|webm|m4s|mp3|m4a|jpg|jpeg|png|webp)$/i.test(i.title) || /^https?:/.test(i.title))
+        .slice(0, 20);
+      if (!targets.length) { toast.info('没有需要补全标题的条目'); return; }
+      aiBusy.value = true;
+      try {
+        const map = await aiSuggestTitles(targets.map(i => ({ url: i.url, title: i.title, kind: kindLabel(i.kind) })), targets[0]?.pageUrl || '');
+        const n = await updateBasketTitlesByUrl(map);
+        toast.success(`已补全 ${n} 条标题`);
+      } catch (e: any) {
+        toast.error(e?.message || 'AI 补全失败');
+      } finally { aiBusy.value = false; }
+    }
+
     function exportJson() {
       exportRowsAsJSON(displayList.value.map(i => ({ kind: kindLabel(i.kind), title: i.title || '', url: i.url, pageUrl: i.pageUrl || '', addedAt: i.addedAt })), '收集篮');
       toast.success('已导出 JSON');
@@ -138,7 +159,7 @@ export default defineComponent({
       toast.success('已导出 CSV');
     }
 
-    return { basketState, filterKind, displayList, selected, selectedCount, toggleSelect, kindLabel, shorten, formatTime, downloadSingle, downloadSelected, onRemove, onClear, exportJson, exportCsv, addToBasket };
+    return { basketState, filterKind, displayList, selected, selectedCount, aiBusy, aiFillTitles, toggleSelect, kindLabel, shorten, formatTime, downloadSingle, downloadSelected, onRemove, onClear, exportJson, exportCsv, addToBasket };
   }
 });
 </script>

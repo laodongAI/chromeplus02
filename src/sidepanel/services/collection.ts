@@ -91,3 +91,14 @@ export function subscribeBasket(listener: (items: BasketItem[]) => void): () => 
     try { chrome.storage.onChanged.removeListener(handler); } catch { /* noop */ }
   };
 }
+
+/** 批量按 URL 更新标题（AI 补全），返回更新条数 */
+export async function updateBasketTitlesByUrl(map: Record<string, string>): Promise<number> {
+  let n = 0;
+  for (const item of basketState.list) {
+    const t = map[item.url];
+    if (t && t !== item.title) { item.title = t; n++; }
+  }
+  if (n > 0) await persist();
+  return n;
+}

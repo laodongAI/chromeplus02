@@ -961,21 +961,150 @@ async function toggleDub() {
 }
 
 // ── 真实导出：用 Canvas + MediaRecorder 逐帧渲染所有片段 ─────
+import { canUseWebCodecsExport, exportMp4 } from '@/core/mp4Export';
+
+// ── 导出：优先 WebCodecs 真 MP4（H.264+AAC 硬件加速、混音），回退 MediaRecorder(WebM) ─────
+function triggerDownload(blob: Blob, name: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 3000);
+}
+
+function drawCaption(canvas: HTMLCanvasElement, t: number) {
+  const cap = captions.value.find(c => t >= c.start && t < c.end);
+  if (!cap) return;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  const fontSize = { sm:16, md:22, lg:30 }[cap.size];
+  ctx.font = `bold ${fontSize}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  const tw = ctx.measureText(cap.text).width;
+  const tx = canvas.width / 2;
+  const ty = cap.position === 'top' ? 40 : cap.position === 'center' ? canvas.height/2 : canvas.height - 30;
+  ctx.fillRect(tx - tw/2 - 8, ty - fontSize, tw + 16, fontSize + 10);
+  ctx.fillStyle = cap.color;
+  ctx.fillText(cap.text, tx, ty);
+}
+
+/** 混音：各片段音频（音量/倍速）+ 配音轨 → OfflineAudioContext 渲染 */
+function buildMixAudio() {
+  return async (): Promise<AudioBuffer | null> => {
+    const AC: typeof AudioContext | undefined = (window as any).AudioContext || (window as any).webkitAudioContext;
+    if (!AC) return null;
+    const tmp = new AC();
+    try {
+      const sr = 48000;
+      const total = Math.max(0.5, totalDuration.value);
+      const offline = new OfflineAudioContext(2, Math.ceil(total * sr), sr);
+      const cache = new Map<string, AudioBuffer>();
+      const decode = async (url: string): Promise<AudioBuffer | null> => {
+        try {
+          let buf = cache.get(url);
+          if (!buf) {
+            const ab = await (await fetch(url)).arrayBuffer();
+            buf = await tmp.decodeAudioData(ab);
+            cache.set(url, buf);
+          }
+          return buf;
+        } catch { return null; }
+      };
+      let any = false;
+      for (const clip of clips.value) {
+        const buf = await decode(clip.url);
+        if (!buf) continue;
+        any = true;
+        const src = offline.createBufferSource();
+        src.buffer = buf;
+        src.playbackRate.value = clip.speed || 1;
+        const g = offline.createGain();
+        g.gain.value = Math.max(0, Math.min(2, (clip.volume ?? 100) / 100));
+        src.connect(g).connect(offline.destination);
+        src.start(clip.offset, clip.trimStart, Math.max(0, clip.trimEnd - clip.trimStart));
+      }
+      for (const d of dubClips.value) {
+        const buf = await decode(d.url);
+        if (!buf) continue;
+        any = true;
+        const src = offline.createBufferSource();
+        src.buffer = buf;
+        const g = offline.createGain(); g.gain.value = 1;
+        src.connect(g).connect(offline.destination);
+        src.start(Math.max(0, Math.min(d.at, total)));
+      }
+      if (!any) return null;
+      return await offline.startRendering();
+    } finally {
+      try { tmp.close(); } catch { /* noop */ }
+    }
+  };
+}
+
 async function exportVideo() {
   if (!clips.value.length) return;
   if (isPlaying.value) pausePlayback();
   exporting.value = true; exportPct.value = 0; exportMsg.value = '准备导出…';
 
   try {
-    // 1. 创建离屏 canvas
+    const width  = videoEl.value?.videoWidth  || 1280;
+    const height = videoEl.value?.videoHeight || 720;
+    const fps = 30;
+    const total = totalDuration.value;
+
+    // ── 首选：WebCodecs 真 MP4（H.264+AAC 硬件加速、含混音） ──
+    if (canUseWebCodecsExport()) {
+      exportMsg.value = '准备混音…';
+      const pool = new Map<string, HTMLVideoElement>();
+      const getVideo = (clip: VideoClip): HTMLVideoElement => {
+        let v = pool.get(clip.id);
+        if (!v) {
+          v = document.createElement('video');
+          v.src = clip.url; v.muted = true; v.preload = 'auto';
+          document.body.appendChild(v);
+          pool.set(clip.id, v);
+        }
+        return v;
+      };
+      const seekTo = async (v: HTMLVideoElement, t: number) => {
+        if (Math.abs(v.currentTime - t) < 0.001) return;
+        v.currentTime = t;
+        await new Promise<void>(r => { v.onseeked = () => r(); setTimeout(r, 80); });
+      };
+      const drawFrame = async (canvas: HTMLCanvasElement, t: number) => {
+        const clip = clips.value.find(c => t >= c.offset && t < c.offset + (c.trimEnd - c.trimStart) / c.speed)
+          || clips.value[clips.value.length - 1];
+        const v = getVideo(clip);
+        const localT = Math.min(clip.trimStart + (t - clip.offset) * clip.speed, Math.max(0, clip.trimEnd - 0.05));
+        await seekTo(v, localT);
+        const ctx = canvas.getContext('2d', { alpha: false })!;
+        const f = clip.filters;
+        ctx.filter = `brightness(${f.brightness}%) contrast(${f.contrast}%) saturate(${f.saturation}%) blur(${f.blur}px) hue-rotate(${f.hueRotate}deg)`;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
+        ctx.filter = 'none';
+        drawCaption(canvas, t);
+      };
+      const blob = await exportMp4({
+        width, height, fps, durationSec: total,
+        drawFrame,
+        mixAudio: buildMixAudio(),
+        onProgress: r => { exportPct.value = Math.round(r * 95); exportMsg.value = `编码中 ${Math.round(r * 100)}%`; }
+      });
+      pool.forEach(v => v.remove()); pool.clear();
+      exportPct.value = 100; exportMsg.value = '导出完成（MP4）！';
+      triggerDownload(blob, `merged_${Date.now()}.mp4`);
+      await new Promise(r => setTimeout(r, 600));
+      return;
+    }
+
+    // ── 回退：Canvas + MediaRecorder（WebM，无声） ──
+    exportMsg.value = '使用兼容模式导出（WebM）…';
     const canvas = document.createElement('canvas');
-    const firstClip = clips.value[0];
-    canvas.width  = videoEl.value?.videoWidth  || 1280;
-    canvas.height = videoEl.value?.videoHeight || 720;
+    canvas.width  = width;
+    canvas.height = height;
     const ctx = canvas.getContext('2d')!;
 
-    // 2. 创建 MediaRecorder 录制 canvas 流
-    const fps = 30;
     const stream = canvas.captureStream(fps);
     const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
       ? 'video/webm;codecs=vp9' : 'video/webm';
@@ -984,17 +1113,13 @@ async function exportVideo() {
     recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
 
     recorder.start(100);
-    exportMsg.value = '开始逐帧合并…';
 
-    // 3. 依次渲染每个 clip
-    const totalDur = totalDuration.value;
     for (let ci = 0; ci < clips.value.length; ci++) {
       const clip = clips.value[ci];
       exportMsg.value = `合并片段 ${ci+1}/${clips.value.length}：${clip.name}`;
       const basePct = (ci / clips.value.length) * 85;
 
       await new Promise<void>((resolve, reject) => {
-        // 创建隐藏 video 用于渲染帧
         const v = document.createElement('video');
         v.src = clip.url;
         v.muted = true;
@@ -1010,7 +1135,6 @@ async function exportVideo() {
           const frameCount = Math.ceil(clipDur * fps);
           const frameInterval = 1 / fps;
 
-          // 应用滤镜到 canvas
           const f = clip.filters;
           ctx.filter = `brightness(${f.brightness}%) contrast(${f.contrast}%) saturate(${f.saturation}%) blur(${f.blur}px) hue-rotate(${f.hueRotate}deg)`;
 
@@ -1020,29 +1144,15 @@ async function exportVideo() {
 
             v.currentTime = localT;
             await new Promise(r => { v.onseeked = r; setTimeout(r, 50); });
-            
+
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
 
-            // 渲染字幕
             const globalT = clip.offset + frame * frameInterval;
-            const cap = captions.value.find(c => globalT >= c.start && globalT < c.end);
-            if (cap) {
-              const fontSize = { sm:16, md:22, lg:30 }[cap.size];
-              ctx.font = `bold ${fontSize}px sans-serif`;
-              ctx.textAlign = 'center';
-              ctx.fillStyle = 'rgba(0,0,0,0.6)';
-              const tw = ctx.measureText(cap.text).width;
-              const tx = canvas.width / 2;
-              const ty = cap.position === 'top' ? 40 : cap.position === 'center' ? canvas.height/2 : canvas.height - 30;
-              ctx.fillRect(tx - tw/2 - 8, ty - fontSize, tw + 16, fontSize + 10);
-              ctx.fillStyle = cap.color;
-              ctx.fillText(cap.text, tx, ty);
-            }
+            drawCaption(canvas, globalT);
 
             exportPct.value = basePct + (frame / frameCount) * (85 / clips.value.length);
 
-            // 控制帧率，避免阻塞 UI
             if (frame % 5 === 0) await new Promise(r => setTimeout(r, 0));
           }
 
@@ -1060,15 +1170,9 @@ async function exportVideo() {
 
     await new Promise<void>(res => { recorder.onstop = () => res(); });
     exportPct.value = 100;
-    exportMsg.value = '导出完成！';
+    exportMsg.value = '导出完成（WebM 回退）！';
 
-    // 4. 下载
-    const blob = new Blob(chunks, { type: mimeType });
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement('a');
-    a.href = url; a.download = `merged_${Date.now()}.webm`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 3000);
+    triggerDownload(new Blob(chunks, { type: mimeType }), `merged_${Date.now()}.webm`);
     await new Promise(r => setTimeout(r, 600));
   } catch (err: any) {
     console.error('Export failed:', err);

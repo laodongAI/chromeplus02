@@ -6,6 +6,7 @@
         提取文本
       </BaseButton>
       <BaseButton v-if="content" size="sm" variant="secondary" @click="copyJSON">复制 JSON</BaseButton>
+      <BaseButton v-if="content" size="sm" variant="secondary" :loading="aiBusy" @click="runAiSummary">AI 摘要</BaseButton>
       <div class="toolbar__right">
         <span v-if="error" class="status status--error">{{ error }}</span>
         <span v-else-if="content" class="status">
@@ -37,6 +38,15 @@
         </div>
       </div>
 
+      <!-- AI 摘要 -->
+      <div v-if="aiSummary" class="preview-block">
+        <div class="preview-block__header">
+          <span class="preview-block__title">AI 摘要 / 关键词</span>
+          <BaseButton size="sm" variant="ghost" @click="copyAiSummary">复制</BaseButton>
+        </div>
+        <pre class="preview-block__body">{{ aiSummary }}</pre>
+      </div>
+
       <!-- Body preview -->
       <div class="preview-block">
         <div class="preview-block__header">
@@ -58,6 +68,7 @@
 
 <script lang="ts">
 import { defineComponent, ref } from 'vue';
+import { aiSummarizePage } from '../services/aiAssist';
 import { BaseButton, BaseCard, BaseTag } from '../components/base';
 import { getActiveTabInfo, sendMessageToTab } from '../utils/chromeMessaging';
 import { MessageType, type TextContentDTO } from '@/messaging';
@@ -96,7 +107,22 @@ export default defineComponent({
       navigator.clipboard.writeText(content.value.textContent).catch(() => {});
     }
 
-    return { content, loading, error, scanText, copyJSON, copyBody };
+    const aiSummary = ref('');
+    const aiBusy = ref(false);
+    async function runAiSummary() {
+      if (!content.value?.textContent || aiBusy.value) return;
+      aiBusy.value = true; aiSummary.value = '';
+      try {
+        aiSummary.value = await aiSummarizePage(content.value.title || '', content.value.textContent);
+      } catch (e: any) {
+        aiSummary.value = '⚠ ' + (e?.message || 'AI 请求失败');
+      } finally { aiBusy.value = false; }
+    }
+    function copyAiSummary() {
+      if (aiSummary.value) navigator.clipboard.writeText(aiSummary.value).catch(() => {});
+    }
+
+    return { content, loading, error, scanText, copyJSON, copyBody, aiSummary, aiBusy, runAiSummary, copyAiSummary };
   }
 });
 </script>
