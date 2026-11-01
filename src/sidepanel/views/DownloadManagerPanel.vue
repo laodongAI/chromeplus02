@@ -215,7 +215,7 @@ export default defineComponent({
   margin-top: 1px;
 }
 
-.history-item__icon--video { background: rgba(59, 138, 255, 0.12); color: #3b8aff; }
+.history-item__icon--video { background: var(--sp-color-primary-light); color: var(--sp-color-primary); }
 .history-item__icon--image { background: rgba(168, 85, 247, 0.12); color: #a855f7; }
 .history-item__icon--audio { background: rgba(34, 197, 94, 0.12); color: #22c55e; }
 

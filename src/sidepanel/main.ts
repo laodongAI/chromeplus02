@@ -9,6 +9,10 @@ import { MessageType } from '@/messaging';
 import { getActiveTabInfo, sendMessageToTab } from './utils/chromeMessaging';
 import { loadSettings } from './services/settings';
 import { isRestrictedPage } from './utils/restrictedPages';
+import { initThemeWatcher } from './composables/useTheme';
+
+// 主题尽早应用（auto 跟随系统），设置加载后校正
+initThemeWatcher(() => loadSettings().then(s => s.theme));
 
 createApp(SidePanelApp).mount(document.getElementById('app') || document.body);
 

@@ -25,6 +25,8 @@
         <BaseButton size="sm" variant="ghost" @click="clearList" :disabled="images.length===0">清空</BaseButton>
       </div>
       <div class="toolbar__right">
+        <BaseButton size="sm" variant="ghost" :disabled="!displayImages.length" @click="exportCsv">导出CSV</BaseButton>
+        <BaseButton size="sm" variant="ghost" :disabled="!displayImages.length" @click="exportJson">导出JSON</BaseButton>
         <BaseButton size="sm" :disabled="!hasSelection" @click="downloadSelected">批量下载 ({{ selectedCount }})</BaseButton>
       </div>
     </div>
@@ -117,7 +119,7 @@
 </template>
 
 <script lang="ts">
-import { BaseButton, BaseCard, BaseTable, SelectionTable, ErrorBadge, BaseSearchBar } from '../components/base';
+import { BaseButton, BaseCard, SelectionTable, BaseSearchBar } from '../components/base';
 import { GLOBAL_SHORTCUT_HINT } from '../utils/shortcutHints';
 import { defineComponent, onMounted, onBeforeUnmount, reactive, ref, computed, watch } from 'vue';
 import { useListSearch } from '../composables/useListSearch';
@@ -129,6 +131,7 @@ import { loadState, saveState } from '../services/persist';
 import { loadSettings } from '../services/settings';
 import { addDownload, subscribe, retryDownload, cancelDownload, type DownloadTask } from '../services/downloadQueue';
 import { loadHistory, isDownloaded } from '../services/downloadHistory';
+import { exportRowsAsJSON, exportRowsAsCSV } from '../services/exportList';
 import { startFrameCapture, stopFrameCapture, isFrameCaptureActive, getFrameIntervalSeconds, type CapturedFrame } from '../services/frameCapture';
 import { getActiveTabInfo, sendMessageToTab, ensureContentConnected, getAllFramesInfo, getAllFrameIds, isReceivingEndMissingError, type FrameInfo } from '../utils/chromeMessaging';
 import { getRestrictedPageMessage } from '../utils/restrictedPages';
@@ -669,7 +672,21 @@ export default defineComponent({
       };
     }
 
-    return { displayImages, images, newHighlightSet, removedHighlightSet, loading, error, lastAction, minWidth, minHeight, kindFilter, filterDownloadStatus, sortKey, sortDir, selectedCount, hasSelection, allSelected, processedKeys, loadedMap, duplicateSet, refreshImages, handleSelectAll, handleRowSelect, selected, applyFilter, downloadSelected, downloadSingle, copyLink, shorten, clearList, setObserverRef, toggleSort, onImgLoad, ensureBusy, ensureConnectAndRefresh, frameMode, frames, frameModeValue, onFrameModeChange, formatFrameLabel, queueTasks, retryTask, cancelTask, frameInterval, frameCaptureActive, frameToggleBusy, nextTickCountdown, toggleFrameCapture, restrictedHint, imageSearchQuery: searchKit.searchQuery, imageSearchInputEl: searchKit.searchInputRef, focusImageSearch, invertImageSelection, selectNewImages, shortcutHint, showShortcutHints, getRowClass, isDownloaded };
+    // ===== 清单导出 =====
+    function exportJson() {
+      exportRowsAsJSON(displayImages.value.map(i => ({ url: i.url, width: i.width, height: i.height, kind: i.kind })), '图片清单');
+    }
+    function exportCsv() {
+      exportRowsAsCSV(displayImages.value, [
+        { label: '地址', value: i => i.url },
+        { label: '宽', value: i => i.width },
+        { label: '高', value: i => i.height },
+        { label: '类型', value: i => i.kind },
+        { label: '已下载', value: i => (isDownloaded(i.url) ? '是' : '否') }
+      ], '图片清单');
+    }
+
+    return { displayImages, images, exportJson, exportCsv, newHighlightSet, removedHighlightSet, loading, error, lastAction, minWidth, minHeight, kindFilter, filterDownloadStatus, sortKey, sortDir, selectedCount, hasSelection, allSelected, processedKeys, loadedMap, duplicateSet, refreshImages, handleSelectAll, handleRowSelect, selected, applyFilter, downloadSelected, downloadSingle, copyLink, shorten, clearList, setObserverRef, toggleSort, onImgLoad, ensureBusy, ensureConnectAndRefresh, frameMode, frames, frameModeValue, onFrameModeChange, formatFrameLabel, queueTasks, retryTask, cancelTask, frameInterval, frameCaptureActive, frameToggleBusy, nextTickCountdown, toggleFrameCapture, restrictedHint, imageSearchQuery: searchKit.searchQuery, imageSearchInputEl: searchKit.searchInputRef, focusImageSearch, invertImageSelection, selectNewImages, shortcutHint, showShortcutHints, getRowClass, isDownloaded };
   }
 });
 </script>
@@ -910,7 +927,7 @@ input[type='checkbox'] {
 .row-removed { animation: rowRemovedFade 0.9s ease-out forwards; }
 
 @keyframes rowNewFade {
-  0% { background: rgba(59, 138, 255, 0.3); }
+  0% { background: var(--sp-color-primary-glow); }
   100% { background: transparent; }
 }
 @keyframes rowRemovedFade {

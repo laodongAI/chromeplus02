@@ -910,7 +910,7 @@ onBeforeUnmount(() => { if (recording.value) stopRecording(); if (timerInterval)
 }
 
 .icon-btn:hover { color: var(--sp-color-text); border-color: var(--sp-color-border-hover); }
-.icon-btn--primary { color: var(--sp-color-primary); border-color: rgba(59,138,255,0.3); background: var(--sp-color-primary-light); }
+.icon-btn--primary { color: var(--sp-color-primary); border-color: var(--sp-color-primary-glow); background: var(--sp-color-primary-light); }
 .icon-btn--primary:hover { background: var(--sp-color-primary); color: white; border-color: transparent; }
 .icon-btn--danger:hover { background: var(--sp-color-danger-light); color: var(--sp-color-danger); border-color: rgba(239,68,68,0.3); }
 

@@ -18,6 +18,8 @@
         </select>
       </div>
       <div class="toolbar__right">
+        <BaseButton size="sm" variant="ghost" :disabled="!displayAudioItems.length" @click="exportCsv">导出CSV</BaseButton>
+        <BaseButton size="sm" variant="ghost" :disabled="!displayAudioItems.length" @click="exportJson">导出JSON</BaseButton>
         <BaseButton size="sm" :disabled="!hasSelection || bulkDownloading" :loading="bulkDownloading" @click="downloadSelected">
           下载所选 ({{ selectedCount }})
         </BaseButton>
@@ -115,13 +117,14 @@
 
 <script lang="ts">
 import { computed, defineComponent, onMounted, onBeforeUnmount, reactive, ref } from 'vue';
-import { BaseButton, BaseCard, BaseTable, SelectionTable, ErrorBadge, BaseSearchBar } from '../components/base';
+import { BaseButton, BaseCard, SelectionTable, BaseSearchBar } from '../components/base';
 import { GLOBAL_SHORTCUT_HINT } from '../utils/shortcutHints';
 import { useListSearch } from '../composables/useListSearch';
 import { useRowHighlight } from '../composables/useRowHighlight';
 import { useResourceCounts } from '../composables/useResourceCounts';
 import { MessageType, type AudioItemDTO } from '@/messaging';
 import { addDownload, subscribe, retryDownload, cancelDownload, type DownloadTask } from '../services/downloadQueue';
+import { exportRowsAsJSON, exportRowsAsCSV } from '../services/exportList';
 import { loadHistory, isDownloaded } from '../services/downloadHistory';
 import { loadState, saveState } from '../services/persist';
 import { loadSettings } from '../services/settings';
@@ -740,9 +743,22 @@ export default defineComponent({
       };
     }
 
+    // ===== 清单导出 =====
+    function exportJson() {
+      exportRowsAsJSON(displayAudioItems.value.map(a => ({ title: a.title || '', url: a.url })), '音频清单');
+    }
+    function exportCsv() {
+      exportRowsAsCSV(displayAudioItems.value, [
+        { label: '标题', value: a => a.title || '' },
+        { label: '地址', value: a => a.url }
+      ], '音频清单');
+    }
+
     return {
       items: filteredItems,
       displayAudioItems,
+      exportJson,
+      exportCsv,
       newAudioHighlight,
       removedAudioHighlight,
       loading,
@@ -895,7 +911,7 @@ function normalizeForDup(url: string): string {
 .row-removed { animation: rowRemovedFade 0.9s ease-out forwards; }
 
 @keyframes rowNewFade {
-  0% { background: rgba(59, 138, 255, 0.3); }
+  0% { background: var(--sp-color-primary-glow); }
   100% { background: transparent; }
 }
 @keyframes rowRemovedFade {

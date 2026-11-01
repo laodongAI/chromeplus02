@@ -38,6 +38,8 @@
         <BaseButton size="sm" variant="secondary" :disabled="loading || !anyRecording" :loading="globalBusy.recordAllStop" @click="stopRecordAll">停止所有录制</BaseButton>
         <BaseButton size="sm" variant="secondary" :disabled="loading" :loading="globalBusy.recordAllStart" @click="startRecordAll">批量录制</BaseButton>
         <BaseButton size="sm" variant="secondary" :disabled="loading || !hasSelection" @click="downloadSelected">下载选中</BaseButton>
+        <BaseButton size="sm" variant="ghost" :disabled="!displayVideos.length" @click="exportCsv">导出CSV</BaseButton>
+        <BaseButton size="sm" variant="ghost" :disabled="!displayVideos.length" @click="exportJson">导出JSON</BaseButton>
         <select class="frame-select" v-model="filterDownloadStatus" :disabled="loading">
           <option value="all">全部状态</option>
           <option value="new">未下载</option>
@@ -161,6 +163,7 @@ import {
   type VideoPlaybackStatusMessage
 } from '@/messaging';
 import { subscribe, retryDownload, cancelDownload, type DownloadTask } from '../services/downloadQueue';
+import { exportRowsAsJSON, exportRowsAsCSV, formatDuration } from '../services/exportList';
 import { loadHistory, isDownloaded, markDownloaded } from '../services/downloadHistory';
 import { loadState, saveState } from '../services/persist';
 import { loadSettings } from '../services/settings';
@@ -951,9 +954,28 @@ export default defineComponent({
       };
     }
 
+    // ===== 清单导出（当前筛选+排序后的列表） =====
+    function exportJson() {
+      exportRowsAsJSON(displayVideos.value.map(v => ({
+        index: v.index, src: v.src, width: v.width, height: v.height,
+        duration: v.duration, visible: v.visible, directSourceCount: v.directSourceCount ?? 0
+      })), '视频清单');
+    }
+    function exportCsv() {
+      exportRowsAsCSV(displayVideos.value, [
+        { label: '序号', value: v => v.index },
+        { label: '分辨率', value: v => (v.width && v.height ? `${v.width}x${v.height}` : '') },
+        { label: '时长', value: v => formatDuration(v.duration) },
+        { label: '直链数', value: v => v.directSourceCount ?? 0 },
+        { label: '地址', value: v => v.src || '' }
+      ], '视频清单');
+    }
+
     return {
       videos,
       displayVideos,
+      exportJson,
+      exportCsv,
       newVideoHighlight,
       removedVideoHighlight,
       videoCount,
@@ -1160,7 +1182,7 @@ function toFriendlyVideoError(err: unknown) {
 .row-removed { animation: rowRemovedFade 0.9s ease-out forwards; }
 
 @keyframes rowNewFade {
-  0% { background: rgba(59, 138, 255, 0.3); }
+  0% { background: var(--sp-color-primary-glow); }
   100% { background: transparent; }
 }
 @keyframes rowRemovedFade {
@@ -1204,7 +1226,7 @@ function toFriendlyVideoError(err: unknown) {
   border-radius: 999px;
   font-size: 11px;
   font-weight: 600;
-  background: rgba(59, 138, 255, 0.10);
+  background: var(--sp-color-primary-light);
   color: var(--sp-color-primary);
 }
 

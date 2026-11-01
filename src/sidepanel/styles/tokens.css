@@ -1,6 +1,7 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
 :root {
+  color-scheme: light;
   --sp-font-family: 'Inter', 'PingFang SC', 'Microsoft Yahei', -apple-system, sans-serif;
   --sp-font-mono: 'JetBrains Mono', 'Cascadia Code', monospace;
 
@@ -70,6 +71,45 @@
   --sp-form-input-padding-x: 10px;
   --sp-form-input-font-size: 12px;
   --sp-search-width: 200px;
+}
+
+/* ── Dark theme：由 useTheme 依据「设置 + 系统偏好」写入 html[data-theme='dark'] ── */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --sp-color-bg:           #14161d;
+  --sp-color-bg-elevated:  #1b1e27;
+  --sp-color-bg-card:      #1b1e27;
+  --sp-color-surface:      #222633;
+  --sp-color-surface-hover:#2a2f3f;
+  --sp-color-bg-subtle:    rgba(255,255,255,0.04);
+  --sp-color-bg-subtle-hover: rgba(255,255,255,0.07);
+  --sp-color-bg-hover:     rgba(255,255,255,0.06);
+
+  --sp-color-border:        rgba(255,255,255,0.09);
+  --sp-color-border-strong: rgba(255,255,255,0.14);
+  --sp-color-border-hover:  rgba(255,255,255,0.22);
+
+  --sp-color-text:          #d1d5db;
+  --sp-color-text-secondary:#9ca3af;
+  --sp-color-heading:       #f3f4f6;
+  --sp-color-muted:         #6b7280;
+
+  /* 暗色下主色提亮一档保证对比度 */
+  --sp-color-primary:       #818cf8;
+  --sp-color-primary-light: rgba(129,140,248,0.16);
+  --sp-color-primary-hover: #a5b0fc;
+  --sp-color-primary-active:#c3c9ff;
+  --sp-color-primary-glow:  rgba(129,140,248,0.30);
+
+  --sp-color-success-light: rgba(16,185,129,0.16);
+  --sp-color-warning-light: rgba(245,158,11,0.16);
+  --sp-color-danger-light:  rgba(239,68,68,0.16);
+
+  --sp-shadow-sm:   0 1px 2px rgba(0,0,0,0.40), 0 1px 4px rgba(0,0,0,0.30);
+  --sp-shadow-md:   0 2px 8px rgba(0,0,0,0.50), 0 1px 3px rgba(0,0,0,0.35);
+  --sp-shadow-lg:   0 4px 20px rgba(0,0,0,0.55), 0 2px 6px rgba(0,0,0,0.40);
+  --sp-shadow-card: 0 1px 4px rgba(0,0,0,0.45);
 }
 
 /* ── Reset & base ── */

@@ -160,7 +160,7 @@ export default defineComponent({
   background: var(--sp-color-primary-light);
   color: var(--sp-color-primary);
   border-radius: 999px;
-  border: 1px solid rgba(59, 138, 255, 0.2);
+  border: 1px solid var(--sp-color-primary-light);
 }
 
 /* Preview */

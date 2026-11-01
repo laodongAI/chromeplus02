@@ -16,11 +16,15 @@ export interface AIModelConfig {
   baiduSecretKey: string;
 }
 
+export type ThemeMode = 'auto' | 'light' | 'dark';
+
 export interface ExtensionSettings {
   namingTemplate: string;
   autoScan: boolean;
   maxConcurrent: number;
   showShortcutHints: boolean;
+  /** 界面主题：auto 跟随系统 */
+  theme: ThemeMode;
   ai: AIModelConfig;
 }
 
@@ -48,11 +52,12 @@ export async function loadSettings(): Promise<ExtensionSettings> {
           autoScan: typeof raw.autoScan === 'boolean' ? raw.autoScan : false,
           maxConcurrent: typeof raw.maxConcurrent === 'number' ? raw.maxConcurrent : 3,
           showShortcutHints: typeof raw.showShortcutHints === 'boolean' ? raw.showShortcutHints : true,
+          theme: raw.theme === 'light' || raw.theme === 'dark' ? raw.theme : 'auto',
           ai: { ...DEFAULT_AI, ...(raw.ai || {}) },
         });
       });
     } catch {
-      resolve({ namingTemplate: '{site}_{title}_{datetime}', autoScan: false, maxConcurrent: 3, showShortcutHints: true, ai: DEFAULT_AI });
+      resolve({ namingTemplate: '{site}_{title}_{datetime}', autoScan: false, maxConcurrent: 3, showShortcutHints: true, theme: 'auto', ai: DEFAULT_AI });
     }
   });
 }

@@ -17,6 +17,17 @@
           </div>
           <div class="toggle" :class="{ 'is-on': state.showShortcutHints }" @click="state.showShortcutHints = !state.showShortcutHints" role="switch" :aria-checked="state.showShortcutHints"></div>
         </div>
+        <div class="setting-row">
+          <div class="setting-row__info">
+            <div class="setting-row__label">界面主题</div>
+            <div class="setting-row__hint">跟随系统 / 亮色 / 暗色，切换即时生效</div>
+          </div>
+          <select v-model="state.theme" class="setting-input" aria-label="界面主题" style="width: 96px;">
+            <option value="auto">跟随系统</option>
+            <option value="light">亮色</option>
+            <option value="dark">暗色</option>
+          </select>
+        </div>
       </div>
 
       <!-- Text / Number Settings -->
@@ -192,7 +203,7 @@ export default defineComponent({
   components: { BaseCard, FormField },
   setup() {
     const state = reactive<ExtensionSettings>({
-      namingTemplate: '{site}_{title}_{datetime}', autoScan: false, maxConcurrent: 3, showShortcutHints: true,
+      namingTemplate: '{site}_{title}_{datetime}', autoScan: false, maxConcurrent: 3, showShortcutHints: true, theme: 'auto',
       ai: { provider:'openai', apiKey:'', baseUrl:'https://api.openai.com/v1', model:'gpt-4o-mini',
             whisperModel:'whisper-1', translateProvider:'openai', deeplApiKey:'', baiduAppId:'', baiduSecretKey:'' }
     });
@@ -236,6 +247,7 @@ export default defineComponent({
       state.autoScan = false;
       state.maxConcurrent = 3;
       state.showShortcutHints = true;
+      state.theme = 'auto';
     }
 
     const previewFilename = computed(() => {
@@ -480,10 +492,10 @@ export default defineComponent({
   cursor: pointer;
   font-family: var(--sp-font-family);
   transition: all var(--sp-transition-fast);
-  box-shadow: 0 1px 4px rgba(59, 138, 255, 0.3);
+  box-shadow: 0 1px 4px var(--sp-color-primary-glow);
 }
 
-.btn-save:hover { background: var(--sp-color-primary-hover); box-shadow: 0 2px 8px rgba(59, 138, 255, 0.4); }
+.btn-save:hover { background: var(--sp-color-primary-hover); box-shadow: 0 2px 8px var(--sp-color-primary-glow); }
 .section-title { font-size:12px; font-weight:700; color:var(--sp-color-heading); margin-bottom:10px; padding-bottom:6px; border-bottom:1px solid var(--sp-color-border); }
 .api-key-row { display:flex; gap:6px; align-items:center; }
 .btn-eye { width:28px; height:28px; border:1px solid var(--sp-color-border-strong); border-radius:var(--sp-radius-sm); background:var(--sp-color-surface); cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:14px; flex-shrink:0; }
