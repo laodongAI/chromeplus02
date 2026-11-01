@@ -21,6 +21,34 @@
       </div>
     </div>
 
+    <!-- 进行中 / 近期下载任务（实时队列） -->
+    <div class="queue-section" v-if="queueTasks.length">
+      <div class="queue-section__head">
+        <span class="queue-section__title">进行中 / 近期任务（{{ queueTasks.length }}）</span>
+        <span class="queue-section__hint">全局暂停/继续在顶部下载条；完成的任务会进入下方历史</span>
+      </div>
+      <div v-for="t in queueTasks" :key="t.id" class="queue-item">
+        <div class="queue-item__body">
+          <div class="queue-item__name" :title="t.url">
+            <span class="engine-chip" :class="`engine-chip--${t.engine || 'direct'}`">{{ engineLabel(t.engine) }}</span>
+            {{ t.fileName || shortenUrl(t.url) }}
+          </div>
+          <div class="queue-item__bar"><div class="queue-item__bar-fill" :class="{ 'is-done': t.status === 'completed' }" :style="{ width: Math.round((t.progress || 0) * 100) + '%' }"></div></div>
+          <div class="queue-item__meta">
+            <span class="status-chip" :class="statusClass(t.status)">{{ statusLabel(t.status) }}</span>
+            <span v-if="t.totalBytes">{{ formatSize(t.totalBytes) }}</span>
+            <span v-if="t.speedBps">{{ formatSize(t.speedBps) }}/s</span>
+            <span v-if="t.etaSeconds">剩余 {{ t.etaSeconds }}s</span>
+            <span v-if="t.error" class="queue-item__err" :title="t.error">{{ t.error }}</span>
+          </div>
+        </div>
+        <div class="queue-item__actions">
+          <BaseButton v-if="t.status === 'error' || t.status === 'canceled'" size="sm" variant="secondary" @click="retryDownload(t.id)">重试</BaseButton>
+          <BaseButton v-if="t.status === 'pending' || t.status === 'running' || t.status === 'paused'" size="sm" variant="ghost" @click="cancelDownload(t.id)">取消</BaseButton>
+        </div>
+      </div>
+    </div>
+
     <div class="history-list">
       <div v-if="displayList.length === 0" class="empty-state">
         <div class="empty-state__icon">
@@ -58,10 +86,10 @@
 </template>
 
 <script lang="ts">
-import { defineComponent, ref, computed, onMounted } from 'vue';
+import { defineComponent, ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import { BaseCard, BaseButton } from '../components/base';
 import { loadHistory, getHistoryList, clearHistory, type HistoryItem } from '../services/downloadHistory';
-import { addDownload } from '../services/downloadQueue';
+import { addDownload, subscribe, cancelDownload, retryDownload, type DownloadTask } from '../services/downloadQueue';
 import { formatBytes } from '@/utils/format';
 import { confirmDialog } from '../composables/useConfirm';
 import { toast } from '../composables/useToast';
@@ -79,10 +107,38 @@ export default defineComponent({
       historyList.value = [...getHistoryList()];
     }
 
+    // ── 实时下载队列（进行中/近期任务） ──
+    const queueTasks = ref<DownloadTask[]>([]);
+    let unsubscribeQueue: (() => void) | null = null;
+
     onMounted(() => {
       refreshHistory();
       window.addEventListener('download-queue-update', refreshHistory);
+      unsubscribeQueue = subscribe(tasks => { queueTasks.value = tasks; });
     });
+    onBeforeUnmount(() => {
+      unsubscribeQueue?.();
+    });
+
+    function engineLabel(engine?: string): string {
+      if (engine === 'hls') return 'HLS';
+      return '直链';
+    }
+    function statusLabel(status: string): string {
+      const map: Record<string, string> = {
+        pending: '待开始', running: '下载中', paused: '已暂停',
+        completed: '已完成', error: '失败', canceled: '已取消'
+      };
+      return map[status] || status;
+    }
+    function statusClass(status: string): string {
+      if (status === 'completed') return 'status-chip--ok';
+      if (status === 'error') return 'status-chip--err';
+      return 'status-chip--muted';
+    }
+    function shortenUrl(url: string): string {
+      return url.length > 56 ? url.slice(0, 56) + '…' : url;
+    }
 
     const displayList = computed(() => {
       return historyList.value.filter(item => {
@@ -130,7 +186,8 @@ export default defineComponent({
       addDownload(item.url, item.filename, kind);
     }
 
-    return { filterStatus, filterType, historyList, displayList, refreshHistory, clearAll, getFilename, formatTime, formatSize, copyLink, retryDownload };
+    return { filterStatus, filterType, historyList, displayList, refreshHistory, clearAll, getFilename, formatTime, formatSize, copyLink, retryDownload,
+             queueTasks, engineLabel, statusLabel, statusClass, shortenUrl, cancelDownload };
   }
 });
 </script>
@@ -251,6 +308,44 @@ export default defineComponent({
 
 .status-chip--ok { background: var(--sp-color-success-light); color: var(--sp-color-success); }
 .status-chip--err { background: var(--sp-color-danger-light); color: var(--sp-color-danger); }
+.status-chip--muted { background: var(--sp-color-bg-subtle); color: var(--sp-color-text-secondary); }
+
+.queue-section { margin-bottom: 14px; }
+.queue-section__head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+.queue-section__title { font-size: 12px; font-weight: 600; color: var(--sp-color-heading); }
+.queue-section__hint { font-size: 11px; color: var(--sp-color-muted); }
+
+.queue-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px; margin-bottom: 6px;
+  border: 1px solid var(--sp-color-border);
+  border-radius: var(--sp-radius-md);
+  background: var(--sp-color-bg-elevated);
+}
+.queue-item__body { flex: 1; min-width: 0; }
+.queue-item__name {
+  font-size: 12px; font-weight: 500; color: var(--sp-color-text);
+  display: flex; align-items: center; gap: 6px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.engine-chip {
+  font-size: 10px; font-weight: 600; padding: 0 6px; border-radius: 999px; flex-shrink: 0;
+  background: var(--sp-color-primary-light); color: var(--sp-color-primary);
+}
+.engine-chip--hls { background: var(--sp-color-warning-light); color: var(--sp-color-warning); }
+.queue-item__bar {
+  height: 4px; border-radius: 999px; margin: 5px 0 4px;
+  background: var(--sp-color-bg-subtle); overflow: hidden;
+}
+.queue-item__bar-fill {
+  height: 100%; border-radius: 999px;
+  background: var(--sp-color-primary);
+  transition: width var(--sp-transition-base);
+}
+.queue-item__bar-fill.is-done { background: var(--sp-color-success); }
+.queue-item__meta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 11px; color: var(--sp-color-muted); }
+.queue-item__err { color: var(--sp-color-danger); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 240px; }
+.queue-item__actions { display: flex; gap: 4px; flex-shrink: 0; }
 
 .history-item__time, .history-item__size {
   font-size: 11px;
