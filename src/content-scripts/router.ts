@@ -178,15 +178,10 @@ export function initContentScript() {
         break;
       }
       case MessageType.CONTROL_VIDEO: {
-        try {
-          const idx: number = typeof message?.index === 'number' ? message.index : 0;
-          const action: VideoControlAction = message?.action === 'pause' ? 'pause' : 'play';
-          const ok = controlVideoByIndex(idx, action);
-          sendResponse({ success: ok });
-        } catch (e: unknown) {
-          sendResponse({ success: false, error: (e as Error)?.message || '控制视频失败' });
-        }
-        break;
+        const idx: number = typeof message?.index === 'number' ? message.index : 0;
+        const action: VideoControlAction = message?.action === 'pause' ? 'pause' : 'play';
+        controlVideoByIndex(idx, action).then(ok => sendResponse({ success: ok })).catch(() => sendResponse({ success: false }));
+        return true; // 异步应答（play 可能被策略拒绝后重试）
       }
       case MessageType.START_RECORD_VIDEO: {
           try {
@@ -622,14 +617,30 @@ function getVideoElementByIndex(index?: number): HTMLVideoElement | null {
   return videos.length ? videos[0] : null;
 }
 
-function controlVideoByIndex(index: number, action: VideoControlAction): boolean {
+async function controlVideoByIndex(index: number, action: VideoControlAction): Promise<boolean> {
   const v = getVideoElementByIndex(index);
   if (!v) return false;
   try {
-    if (action === 'play') v.play();
-    else if (action === 'pause') v.pause();
-    return true;
-  } catch (_) { return false; }
+    if (action === 'pause') {
+      v.pause();
+      return true;
+    }
+    if (action === 'play') {
+      try {
+        await v.play();
+        return true;
+      } catch {
+        // 自动播放策略拒绝：静音重试，成功后延迟恢复声音
+        v.muted = true;
+        try { await v.play(); } catch { return false; }
+        setTimeout(() => { try { v.muted = false; } catch { /* noop */ } }, 400);
+        return true;
+      }
+    }
+    return false;
+  } catch {
+    return false;
+  }
 }
 
 function collectVideoSourceCandidates(video: HTMLVideoElement | null): VideoSourceCandidate[] {

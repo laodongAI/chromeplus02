@@ -621,11 +621,12 @@ export default defineComponent({
       setBusy(key, true);
       try {
         const tabId = await ensureActiveTab();
+        // frameId 定向：列表来自哪个 frame 就控制哪个 frame 的视频（?? 0 = 顶层），杜绝跨 frame 同序号误控
         const response = await sendMessageToTab<{ success: boolean; error?: string }>(tabId, {
           type: MessageType.CONTROL_VIDEO,
           index: resolvedIndex,
           action
-        }, { frameId: currentFrameId.value ?? undefined });
+        }, { frameId: currentFrameId.value ?? 0 });
         if (!response?.success) throw new Error(response?.error || '控制失败');
         lastAction.value = describeControlAction(action);
       } catch (err) {
@@ -644,7 +645,7 @@ export default defineComponent({
         const response = await sendMessageToTab<{ success: boolean; startedAt?: number; error?: string }>(tabId, {
           type: MessageType.START_RECORD_VIDEO,
           index: resolvedIndex
-        }, { frameId: currentFrameId.value ?? undefined });
+        }, { frameId: currentFrameId.value ?? 0 });
         if (!response?.success) throw new Error(response?.error || '开始录制失败');
         recordingStates[resolvedIndex] = {
           recording: true,
@@ -677,7 +678,7 @@ export default defineComponent({
         const response = await sendMessageToTab<{ success: boolean; error?: string }>(tabId, {
           type: MessageType.STOP_RECORD_VIDEO,
           index: resolvedIndex
-        }, { frameId: currentFrameId.value ?? undefined });
+        }, { frameId: currentFrameId.value ?? 0 });
         if (!response?.success) throw new Error(response?.error || '停止录制失败');
         lastAction.value = '正在停止录制…';
       } catch (err) {
@@ -755,7 +756,7 @@ export default defineComponent({
       setBusy(key, true);
       downloadErrors[resolvedIndex] = '';
       try {
-        const { sources, meta } = await fetchVideoSources(resolvedIndex, currentFrameId.value ?? undefined);
+        const { sources, meta } = await fetchVideoSources(resolvedIndex, currentFrameId.value ?? 0);
         if(!sources.length) throw new Error('无直链');
         const candidate = pickBestCandidate(sources);
         if(!candidate) throw new Error('无有效直链');

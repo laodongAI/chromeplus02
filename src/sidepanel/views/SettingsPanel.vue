@@ -203,30 +203,6 @@
         </button>
       </div>
     </div>
-      <!-- 支持网站目录 -->
-      <div class="setting-section">
-        <div class="setting-row setting-row--vertical">
-          <div class="setting-row__label">支持网站目录（{{ filteredSites.length }}/{{ SITE_CATALOG.length }}）</div>
-          <div class="site-filter">
-            <input type="text" class="setting-input setting-input--full" v-model="siteQuery" placeholder="搜索站点名称、域名或描述…" />
-            <select v-model="siteCategory" class="setting-input" style="width: 84px; flex-shrink: 0;" aria-label="站点分类">
-              <option v-for="c in siteCategories" :key="c" :value="c">{{ c }}</option>
-            </select>
-          </div>
-        </div>
-        <div class="site-catalog">
-          <div v-for="s in filteredSites" :key="s.id" class="site-item">
-            <div class="site-item__main">
-              <div class="site-item__name">{{ s.name }}<span class="site-item__cat">{{ s.category }}</span></div>
-              <div class="site-item__desc">{{ s.desc }}</div>
-              <div class="site-item__domains">{{ s.domains.join(' · ') }}</div>
-            </div>
-            <BaseButton size="sm" variant="ghost" @click="openSite(s.url)">打开</BaseButton>
-          </div>
-          <div v-if="!filteredSites.length" class="site-empty">没有匹配的站点</div>
-        </div>
-        <div class="setting-row__hint" style="margin-top: 6px;">DRM/付费版权内容无法直链下载，扩展会提示使用「录制」兜底；目录之外的通用站点同样支持嗅探。</div>
-      </div>
   </BaseCard>
 </template>
 
@@ -238,7 +214,6 @@ import { loadSettings, saveSettings, type ExtensionSettings } from '../services/
 import { getHistoryCount, clearHistory, loadHistory } from '../services/downloadHistory';
 import { sendRuntimeMessage } from '../utils/chromeMessaging';
 import { MessageType } from '@/messaging';
-import { SITE_CATALOG, SITE_CATEGORY_ORDER } from '@/data/sites';
 import { confirmDialog } from '../composables/useConfirm';
 import { toast } from '../composables/useToast';
 
@@ -314,24 +289,6 @@ export default defineComponent({
     }
     watch(() => state.companion, (v) => { if (v) void checkCompanion(); });
 
-    // ── 支持网站目录 ──
-    const siteQuery = ref('');
-    const siteCategory = ref<string>('全部');
-    const siteCategories = ['全部', ...SITE_CATEGORY_ORDER];
-    const filteredSites = computed(() => {
-      const q = siteQuery.value.trim().toLowerCase();
-      return SITE_CATALOG.filter(s => {
-        if (siteCategory.value !== '全部' && s.category !== siteCategory.value) return false;
-        if (!q) return true;
-        return s.name.toLowerCase().includes(q)
-          || s.desc.toLowerCase().includes(q)
-          || s.domains.some(d => d.toLowerCase().includes(q));
-      });
-    });
-    function openSite(url: string) {
-      try { chrome.tabs.create({ url, active: true }); } catch { window.open(url, '_blank'); }
-    }
-
     const previewFilename = computed(() => {
       try {
         return formatFilename(state.namingTemplate, { site: 'youtube', title: 'my_video', index: '001' });
@@ -381,7 +338,7 @@ export default defineComponent({
     return { state, historyCount, handleClearHistory, immediateSave, resetToDefault, previewFilename,
              showApiKey, testingAI, testResult, onProviderChange, testAI,
              companionStatusText, companionChecking, checkCompanion,
-             siteQuery, siteCategory, siteCategories, filteredSites, openSite, SITE_CATALOG };
+ };
   }
 });
 </script>
@@ -609,37 +566,4 @@ export default defineComponent({
 .test-result.fail { color:var(--sp-color-danger); }
 
 
-/* ── 支持网站目录 ── */
-.site-filter { display: flex; gap: 6px; margin-top: 6px; }
-.site-catalog {
-  max-height: 300px;
-  overflow-y: auto;
-  border: 1px solid var(--sp-color-border);
-  border-radius: var(--sp-radius-md);
-  background: var(--sp-color-bg-subtle);
-}
-.site-item {
-  display: flex; align-items: center; gap: 8px;
-  padding: 7px 10px;
-  border-bottom: 1px solid var(--sp-color-border);
-  background: var(--sp-color-bg-elevated);
-}
-.site-item:last-child { border-bottom: none; }
-.site-item__main { flex: 1; min-width: 0; }
-.site-item__name {
-  font-size: 12px; font-weight: 600; color: var(--sp-color-heading);
-  display: flex; align-items: center; gap: 6px;
-}
-.site-item__cat {
-  font-size: 10px; font-weight: 500;
-  color: var(--sp-color-primary);
-  background: var(--sp-color-primary-light);
-  padding: 0 6px; border-radius: 999px;
-}
-.site-item__desc {
-  font-size: 11px; color: var(--sp-color-text-secondary);
-  margin-top: 1px; line-height: 1.4;
-}
-.site-item__domains { font-size: 10px; color: var(--sp-color-muted); margin-top: 1px; font-family: var(--sp-font-mono); }
-.site-empty { padding: 16px; text-align: center; font-size: 12px; color: var(--sp-color-muted); }
 </style>

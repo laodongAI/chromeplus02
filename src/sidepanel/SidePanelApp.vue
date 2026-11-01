@@ -51,6 +51,7 @@
           :is="activeComponent"
           v-bind="activeTab === 'editor' ? { initialFiles: editorFiles } : {}"
           @open-editor="openInEditor"
+          @open-site="onOpenSite"
         />
         <template #fallback>
           <div class="panel-loading">
@@ -72,7 +73,9 @@ import { provideResourceCounts } from './composables/useResourceCounts';
 import GlobalDownloadBar from './components/GlobalDownloadBar.vue';
 import BaseToast from './components/base/BaseToast.vue';
 import BaseConfirm from './components/base/BaseConfirm.vue';
+import AsyncSiteCatalogPanel from './views/SiteCatalogPanel.vue';
 
+const AsyncSiteCatalogPanel     = defineAsyncComponent(() => import('./views/SiteCatalogPanel.vue'));
 const AsyncVideoCapturePanel    = defineAsyncComponent(() => import('./views/VideoCapturePanel.vue'));
 const AsyncImageGrabPanel       = defineAsyncComponent(() => import('./views/ImageGrabPanel.vue'));
 const AsyncAudioGrabPanel       = defineAsyncComponent(() => import('./views/AudioGrabPanel.vue'));
@@ -84,10 +87,12 @@ const AsyncScreenRecordPanel    = defineAsyncComponent(() => import('./views/Scr
 const AsyncVideoEditorPanel     = defineAsyncComponent(() => import('./views/VideoEditorPanel.vue'));
 const AsyncCollectionPanel      = defineAsyncComponent(() => import('./views/CollectionPanel.vue'));
 
-type TabKey = 'video'|'image'|'audio'|'text'|'downloads'|'sources'|'settings'|'screenrec'|'editor'|'basket';
+type TabKey = 'video'|'image'|'audio'|'text'|'downloads'|'sources'|'settings'|'screenrec'|'editor'|'basket'|'sites';
 type GroupKey = 'grab' | 'tools' | 'manage' | 'system';
 
 const tabs = [
+  { key:'sites'     as TabKey, label:'网站',   description:'内置支持网站目录：选站点 → 打开 → 一键扫描', metric:'sites'     as TabKey, color:'#0ea5e9', bgColor:'rgba(14,165,233,0.08)',  component:AsyncSiteCatalogPanel,
+    icon:`<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>` },
   { key:'video'     as TabKey, label:'视频',   description:'识别并控制页面视频，支持录制与抓帧',    metric:'video'     as TabKey, color:'#6366f1', bgColor:'rgba(99,102,241,0.08)',  component:AsyncVideoCapturePanel,
     icon:`<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>` },
   { key:'image'     as TabKey, label:'图像',   description:'扫描页面图片，支持预览与批量下载',      metric:'image'     as TabKey, color:'#8b5cf6', bgColor:'rgba(139,92,246,0.08)',  component:AsyncImageGrabPanel,
@@ -117,7 +122,7 @@ const activeComponent = computed(() => tabs.find(t => t.key === activeTab.value)
 
 // ── 分组导航：降低 10 个平级 Tab 的认知负担（UX-MULTI-TAB-001） ──
 const groups: { key: GroupKey; label: string; tabs: TabKey[] }[] = [
-  { key: 'grab',   label: '抓取', tabs: ['video', 'image', 'audio', 'text'] },
+  { key: 'grab',   label: '抓取', tabs: ['sites', 'video', 'image', 'audio', 'text'] },
   { key: 'tools',  label: '工具', tabs: ['sources', 'screenrec', 'editor'] },
   { key: 'manage', label: '管理', tabs: ['downloads', 'basket'] },
   { key: 'system', label: '系统', tabs: ['settings'] }
@@ -126,6 +131,12 @@ const activeGroup = computed(() => groups.find(g => g.tabs.includes(activeTab.va
 const visibleTabs = computed(() => tabs.filter(t => activeGroup.value.tabs.includes(t.key)));
 
 function switchTab(key: TabKey) { activeTab.value = key; }
+/** 从网站目录打开站点：新标签页打开后，侧栏自动切到「抓取-视频」准备扫描 */
+function onOpenSite(url: string) {
+  activeTab.value = 'video';
+  void url;
+}
+
 function switchGroup(g: { key: GroupKey; tabs: TabKey[] }) {
   if (!g.tabs.includes(activeTab.value)) activeTab.value = g.tabs[0];
 }
