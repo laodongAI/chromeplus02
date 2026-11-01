@@ -4,7 +4,11 @@
  */
 import { defineConfig } from 'vite';
 import vue from '@vitejs/plugin-vue';
-import { resolve } from 'path';
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
+
+// 兼容 ESM 环境下的 __dirname
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   plugins: [vue()],
@@ -15,8 +19,8 @@ export default defineConfig({
         // 使用 HTML 作为多入口，便于在 Chrome 中直接加载页面
         background: resolve(__dirname, 'src/background/index.ts'),
         sidepanel: resolve(__dirname, 'src/sidepanel/index.html'),
-        // 内容脚本单独作为 Rollup 入口，供 manifest 引用
-        content: resolve(__dirname, 'src/content-scripts/main.ts')
+        editor: resolve(__dirname, 'src/editor/index.html')
+        // 内容脚本移至 vite.config.content.ts 单独构建
       },
       output: {
         entryFileNames: 'js/[name].js',
