@@ -4,8 +4,6 @@
  */
 import { initContentScript } from './router';
 
-// 避免重复初始化
-if (!(window as any).__EXT_CONTENT_INIT__) {
-	(window as any).__EXT_CONTENT_INIT__ = true;
-	initContentScript();
-}
+// 始终初始化，以支持扩展重载后的重新注入
+// 注意：initContentScript 内部应处理重复监听器的问题（如使用具名函数或清理逻辑）
+initContentScript();

@@ -14,19 +14,43 @@ withDefaults(defineProps<{ variant?: 'neutral' | 'success' | 'warning' | 'danger
 .base-tag {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 600;
+  gap: var(--sp-spacing-1);
+  padding: 4px 10px;
+  border-radius: var(--sp-radius-full);
+  font-size: var(--sp-text-xs);
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.05em;
   border: 1px solid transparent;
 }
 
-.base-tag--neutral { background: rgba(148, 163, 184, 0.15); color: var(--sp-color-muted); }
-.base-tag--success { background: rgba(61, 213, 152, 0.12); color: var(--sp-color-success); border-color: rgba(61, 213, 152, 0.4); }
-.base-tag--warning { background: rgba(246, 195, 67, 0.12); color: var(--sp-color-warning); border-color: rgba(246, 195, 67, 0.4); }
-.base-tag--danger { background: rgba(248, 113, 113, 0.12); color: var(--sp-color-danger); border-color: rgba(248, 113, 113, 0.4); }
-.base-tag--info { background: rgba(79, 156, 255, 0.12); color: var(--sp-color-primary); border-color: rgba(79, 156, 255, 0.4); }
+.base-tag--neutral {
+  background: var(--sp-color-bg-subtle);
+  color: var(--sp-color-muted);
+  border-color: var(--sp-color-border);
+}
+
+.base-tag--success {
+  background: var(--sp-color-success-light);
+  color: var(--sp-color-success);
+  border-color: rgba(16, 185, 129, 0.3);
+}
+
+.base-tag--warning {
+  background: var(--sp-color-warning-light);
+  color: var(--sp-color-warning);
+  border-color: rgba(245, 158, 11, 0.3);
+}
+
+.base-tag--danger {
+  background: var(--sp-color-danger-light);
+  color: var(--sp-color-danger);
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.base-tag--info {
+  background: var(--sp-color-primary-light);
+  color: var(--sp-color-primary);
+  border-color: rgba(59, 130, 246, 0.3);
+}
 </style>

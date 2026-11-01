@@ -1,5 +1,5 @@
 const RECEIVER_MISSING_REGEX = /receiving end does not exist|could not establish connection/i;
-const DEFAULT_CONTENT_SCRIPTS = ['content_script.js'];
+const DEFAULT_CONTENT_SCRIPTS = ['js/content.js'];
 
 export interface SendTabMessageOptions {
   /**
@@ -226,7 +226,7 @@ export async function ensureContentConnected(tabId: number): Promise<{ ok: boole
   }
   // 若探测均失败，尝试注入并重试
   try {
-    await injectContentScripts(tabId, ['content_script.js']);
+    await injectContentScripts(tabId, DEFAULT_CONTENT_SCRIPTS);
   } catch (e) {
     return { ok: false, framesChecked: first.checked, framesConnected: first.connected, error: (e as Error)?.message };
   }

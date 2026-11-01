@@ -51,7 +51,8 @@ export function getRestrictedPageMessage(url?: string | null): string | null {
   if (!normalized) return null;
   for (const rule of RULES) {
     if (rule.test(normalized)) {
-      return `${rule.message} 请切换到普通网页后再试。`;
+      // 返回核心原因，不重复拼接行动提示（由 UI 层统一展示）
+      return rule.message;
     }
   }
   return null;

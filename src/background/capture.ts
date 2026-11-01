@@ -1,11 +1,18 @@
 /**
  * 网络媒体捕获（基于 chrome.webRequest）。
- * 目标：捕获视频直链候选（mp4/webm/mkv/mov/ts/m3u8/mpd/m4s/flv），
- * 并提供按 tabId/frameId 查询的消息接口：GET_CAPTURED_VIDEO_SOURCES。
+ * 目标：捕获视频/音频直链与 HLS/DASH 流候选，并标记类型（kind）；
+ * 提供按 tabId/frameId 查询的消息接口：GET_CAPTURED_VIDEO_SOURCES。
+ * 分类逻辑见 utils/mediaType.ts（纯函数，含单测）。
  */
 
- type CapturedSource = {
+import { classifyNetworkMedia, extFromUrl } from '@/utils/mediaType';
+import { registerBgHandler } from './bus';
+
+export type CapturedKind = 'video' | 'audio' | 'hls' | 'dash';
+
+type CapturedSource = {
   url: string;
+  kind: CapturedKind;
   mimeType?: string;
   extension?: string;
   size?: number;
@@ -15,18 +22,36 @@
   time: number;
 };
 
- const MEDIA_EXT = /\.(mp4|webm|mkv|mov|m3u8|flv|ts|m4s|mpd)(?:$|[?#])/i;
- const HLS_CT = /application\/(vnd\.apple\.mpegurl|x-mpegURL)/i;
- const DASH_CT = /application\/dash\+xml/i;
- const VIDEO_CT = /^video\//i;
- const AUDIO_CT = /^audio\//i;
+// tabId -> frameId -> list
+const store = new Map<number, Map<number | 'top', CapturedSource[]>>();
+let installed = false;
 
- // tabId -> frameId -> list
- const store = new Map<number, Map<number | 'top', CapturedSource[]>>();
- let installed = false;
+// 嗅探变更钩子（工具栏 badge 等消费者注册）
+let captureChangedHandler: ((tabId: number) => void) | null = null;
+export function setCaptureChangedHandler(fn: (tabId: number) => void): void {
+  captureChangedHandler = fn;
+}
 
- export function initCaptureHandlers() {
-  if (installed) return; installed = true;
+/** 统计某标签页嗅探到的媒体条数（排除 ts/m4s 分片与重复 URL） */
+export function countTabSources(tabId: number): number {
+  const perTab = store.get(tabId);
+  if (!perTab) return 0;
+  const SEGMENT_EXT = new Set(['ts', 'm4s']);
+  const seen = new Set<string>();
+  let n = 0;
+  perTab.forEach((list) => list.forEach((s) => {
+    const ext = (s.extension || '').toLowerCase();
+    if (SEGMENT_EXT.has(ext)) return;
+    const key = stripHash(s.url);
+    if (seen.has(key)) return;
+    seen.add(key); n++;
+  }));
+  return n;
+}
+
+export function initCaptureHandlers() {
+  if (installed) return;
+  installed = true;
   try {
     // 捕获响应完成以读取 headers（需要 extraInfoSpec: 'responseHeaders'）
     chrome.webRequest.onCompleted.addListener(
@@ -40,24 +65,20 @@
     try { console.warn('[bg.capture] 注册 onCompleted 失败:', e); } catch { /* noop */ }
   }
 
+  // 标签页关闭时清理嗅探缓存，防止内存累积
   try {
-    chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-      if (!message || !message.type) return;
-      if (message.type === 'GET_CAPTURED_VIDEO_SOURCES') {
-        const tabId: number | undefined = typeof message.tabId === 'number' ? message.tabId : undefined;
-        const frameId: number | undefined = typeof message.frameId === 'number' ? message.frameId : undefined;
-        const sources = queryCaptured(tabId, frameId);
-        sendResponse({ success: true, sources });
-        return true;
-      }
-      return undefined;
-    });
-  } catch (e) {
-    try { console.warn('[bg.capture] 注册 runtime 消息失败:', e); } catch { /* noop */ }
-  }
- }
+    chrome.tabs.onRemoved.addListener((tabId) => { store.delete(tabId); });
+  } catch { /* noop */ }
 
- function handleCompleted(details: chrome.webRequest.WebResponseCacheDetails) {
+  registerBgHandler('GET_CAPTURED_VIDEO_SOURCES', (message) => {
+    const tabId: number | undefined = typeof message?.tabId === 'number' ? message.tabId : undefined;
+    const frameId: number | undefined = typeof message?.frameId === 'number' ? message.frameId : undefined;
+    const sources = queryCaptured(tabId, frameId);
+    return { success: true, sources };
+  });
+}
+
+function handleCompleted(details: chrome.webRequest.WebResponseCacheDetails) {
   const { url, tabId, frameId, responseHeaders } = details as any;
   if (typeof tabId !== 'number' || !url) return;
 
@@ -65,16 +86,14 @@
   const lenStr = getHeader(responseHeaders, 'content-length');
   const size = typeof lenStr === 'string' ? Number(lenStr) : undefined;
 
-  // 判断是否为可能的视频/音频/流媒体
-  const isMediaByExt = MEDIA_EXT.test(url);
-  const isMediaByCT = !!(ct && (VIDEO_CT.test(ct) || AUDIO_CT.test(ct) || HLS_CT.test(ct) || DASH_CT.test(ct)));
-  if (!isMediaByExt && !isMediaByCT) return;
+  const cls = classifyNetworkMedia(url, ct);
+  if (!cls.kind) return;
 
-  const ext = inferExtension(url, ct);
   const entry: CapturedSource = {
     url,
+    kind: cls.kind,
     mimeType: ct,
-    extension: ext,
+    extension: cls.extension || extFromUrl(url),
     size: Number.isFinite(size!) ? size : undefined,
     via: 'network',
     tabId,
@@ -82,9 +101,10 @@
     time: Date.now()
   };
   record(entry);
- }
+  try { captureChangedHandler?.(tabId); } catch { /* noop */ }
+}
 
- function record(item: CapturedSource) {
+function record(item: CapturedSource) {
   const frameKey: number | 'top' = typeof item.frameId === 'number' ? item.frameId : 'top';
   if (!store.has(item.tabId)) store.set(item.tabId, new Map());
   const perTab = store.get(item.tabId)!;
@@ -96,11 +116,11 @@
   list.push(item);
   // 限制每帧存量，防止无限增长
   if (list.length > 300) list.splice(0, list.length - 300);
- }
+}
 
- function queryCaptured(tabId?: number, frameId?: number) {
-  const out: { url: string; mimeType?: string; extension?: string; size?: number; via: string }[] = [];
-  const add = (s: CapturedSource) => out.push({ url: s.url, mimeType: s.mimeType, extension: s.extension, size: s.size, via: 'network' });
+function queryCaptured(tabId?: number, frameId?: number) {
+  const out: { url: string; kind: CapturedKind; mimeType?: string; extension?: string; size?: number; via: string }[] = [];
+  const add = (s: CapturedSource) => out.push({ url: s.url, kind: s.kind, mimeType: s.mimeType, extension: s.extension, size: s.size, via: 'network' });
   if (typeof tabId === 'number') {
     const perTab = store.get(tabId);
     if (!perTab) return out;
@@ -116,9 +136,9 @@
   // 未指定 tabId：聚合所有（通常不需要）
   store.forEach((frames) => frames.forEach((list) => list.forEach(add)));
   return dedupe(out);
- }
+}
 
- function dedupe(arr: { url: string }[]) {
+function dedupe(arr: { url: string }[]) {
   const seen = new Set<string>();
   return arr.filter((s) => {
     const key = stripHash(s.url);
@@ -126,30 +146,14 @@
     seen.add(key);
     return true;
   });
- }
+}
 
- function getHeader(headers: chrome.webRequest.HttpHeader[] | undefined, name: string): string | undefined {
+function getHeader(headers: chrome.webRequest.HttpHeader[] | undefined, name: string): string | undefined {
   if (!headers) return undefined;
   const h = headers.find((x) => (x.name || '').toLowerCase() === name.toLowerCase());
   return (h?.value || (Array.isArray(h?.binaryValue) ? new TextDecoder().decode(new Uint8Array(h!.binaryValue!)) : undefined)) as string | undefined;
- }
+}
 
- function inferExtension(url: string, ct?: string): string | undefined {
-  try {
-    const m = url.split('?')[0].split('#')[0].match(/\.([a-z0-9]{2,5})$/i);
-    if (m) return m[1].toLowerCase();
-  } catch { /* noop */ }
-  if (!ct) return undefined;
-  if (/mp4/i.test(ct)) return 'mp4';
-  if (/webm/i.test(ct)) return 'webm';
-  if (/matroska|mkv/i.test(ct)) return 'mkv';
-  if (/quicktime|mov/i.test(ct)) return 'mov';
-  if (HLS_CT.test(ct)) return 'm3u8';
-  if (DASH_CT.test(ct)) return 'mpd';
-  if (/mpegurl/i.test(ct)) return 'm3u8';
-  return undefined;
- }
-
- function stripHash(u: string) {
+function stripHash(u: string) {
   try { return u.split('#')[0]; } catch { return u; }
- }
+}

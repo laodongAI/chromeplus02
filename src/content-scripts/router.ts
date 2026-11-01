@@ -9,14 +9,35 @@ import { scanAudioUrls } from './audio';
 import type { AudioItem } from './audio';
 import { scanImages } from './images';
 import type { ImageScanItem } from './images';
+import { scanPageSources } from './sources';
 import { MessageType, type VideoItemDTO, type VideoSourceCandidate, type VideoControlAction, type PongMessage } from '@/messaging';
+import { initTextExtractor } from './text';
 
 // 全局自动扫描开关缓存（来自存储），供增量观察函数使用
 let autoScanEnabledGlobal = false;
 
 // 录制状态缓存
-interface ActiveRecording { recorder: MediaRecorder; mode: 'video'|'audio'; startedAt: number; chunks: BlobPart[]; }
+interface ActiveRecording { 
+  recorder: MediaRecorder; 
+  mode: 'video'|'audio'; 
+  startedAt: number; 
+  chunks: BlobPart[]; 
+  element: HTMLVideoElement;
+  listeners: Record<string, EventListener>;
+}
 const activeRecordings: Record<number, ActiveRecording> = {};
+
+// 本内容脚本所在的 frameId（0 = 顶层窗口）；初始化时通过 WHO_AM_I 向后台查询一次
+let selfFrameId = 0;
+function detectSelfFrameId() {
+  try {
+    chrome.runtime.sendMessage({ type: MessageType.WHO_AM_I }, (resp: unknown) => {
+      void chrome.runtime.lastError;
+      const r = resp as { frameId?: number } | undefined;
+      if (r && typeof r.frameId === 'number') selfFrameId = r.frameId;
+    });
+  } catch { /* noop */ }
+}
 
 // ============== 稳定视频索引支持 ==============
 // 通过 WeakMap 记录已见过的视频元素与其稳定 ID，避免 DOM 重排导致索引漂移。
@@ -44,6 +65,11 @@ export function pickAdapter(loc: Location = window.location): SiteAdapter | null
 }
 
 export function initContentScript() {
+  // 初始化文本抽取
+  initTextExtractor();
+  // 查询自身 frameId，用于 RESOURCE_UPDATE 等增量消息标记来源
+  detectSelfFrameId();
+  
   const features = {
     video: false,
     image: false,
@@ -86,6 +112,17 @@ export function initContentScript() {
         }
         break;
       }
+      case MessageType.SETTINGS_UPDATE: {
+        // 设置变更（如 autoScan 开关）实时同步到内容脚本，无需刷新页面
+        try {
+          const p = (message?.payload || {}) as { autoScan?: boolean };
+          if (typeof p.autoScan === 'boolean') {
+            autoScanEnabledGlobal = p.autoScan;
+            if (autoScanEnabledGlobal) tryInstallDynamicWatchers(features);
+          }
+        } catch { /* noop */ }
+        break;
+      }
       case MessageType.PING: {
         try {
           const sender = _sender as chrome.runtime.MessageSender;
@@ -108,7 +145,7 @@ export function initContentScript() {
       case MessageType.REQUEST_IMAGE_LIST: {
         try {
           const list = scanImages();
-          sendResponse({ success: true, items: list });
+          sendResponse({ success: true, items: list, frameId: selfFrameId });
         } catch (e: unknown) {
           sendResponse({ success: false, error: (e as Error)?.message || '获取图片失败' });
         }
@@ -117,13 +154,13 @@ export function initContentScript() {
       case MessageType.REQUEST_AUDIO_LIST: {
         // 每次请求时重新扫描，保证结果最新
         audioList = scanAudioUrls();
-        sendResponse({ success: true, items: audioList });
+        sendResponse({ success: true, items: audioList, frameId: selfFrameId });
         break;
       }
       case MessageType.GET_VIDEO_LIST: {
         try {
           const videos = scanVideoElements();
-          sendResponse({ success: true, videos });
+          sendResponse({ success: true, videos, frameId: selfFrameId });
         } catch (e: unknown) {
           sendResponse({ success: false, error: (e as Error)?.message || '获取视频列表失败' });
         }
@@ -132,7 +169,7 @@ export function initContentScript() {
       case MessageType.CONTROL_VIDEO: {
         try {
           const idx: number = typeof message?.index === 'number' ? message.index : 0;
-          const action: VideoControlAction = message?.action || 'toggle';
+          const action: VideoControlAction = message?.action === 'pause' ? 'pause' : 'play';
           const ok = controlVideoByIndex(idx, action);
           sendResponse({ success: ok });
         } catch (e: unknown) {
@@ -185,31 +222,77 @@ export function initContentScript() {
               recorder = new MediaRecorder(stream);
             }
             const chunks: BlobPart[] = [];
+            const startedAt = Date.now();
             recorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); };
             recorder.onstart = () => {
-              chrome.runtime.sendMessage({ type: MessageType.VIDEO_RECORDING_STATUS, status: 'started', index: idx, startedAt: Date.now(), mode });
+              const statusMsg = { type: MessageType.VIDEO_RECORDING_STATUS, status: 'started' as const, index: idx, startedAt, mode };
+              chrome.runtime.sendMessage(statusMsg);
             };
             recorder.onstop = () => {
+              console.log('[content/router] Recorder stopped. Chunks:', chunks.length);
+              // Clean up listeners
+              const rec = activeRecordings[idx];
+              if (rec && rec.listeners) {
+                Object.entries(rec.listeners).forEach(([evt, fn]) => rec.element.removeEventListener(evt, fn));
+              }
+
               const blob = new Blob(chunks, { type: recorder.mimeType || (mode === 'audio' ? 'audio/webm' : 'video/webm') });
+              console.log('[content/router] Blob size:', blob.size);
+              
+              if (blob.size === 0) {
+                const errorMsg = { type: MessageType.VIDEO_RECORDING_STATUS, status: 'error' as const, index: idx, error: '录制数据为空 (Blob size 0)', mode };
+                chrome.runtime.sendMessage(errorMsg);
+                delete activeRecordings[idx];
+                return;
+              }
+
               const fileName = `record_${mode}_${Date.now()}_${idx}.webm`;
               // 触发下载：使用临时链接
               try {
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url; a.download = fileName; a.style.display = 'none';
-                document.body.appendChild(a); a.click(); setTimeout(()=>{ document.body.removeChild(a); URL.revokeObjectURL(url); }, 4000);
-              } catch (e) { /* ignore download trigger errors */ }
-              chrome.runtime.sendMessage({ type: MessageType.VIDEO_RECORDING_STATUS, status: 'completed', index: idx, fileName, mode });
+                document.body.appendChild(a); 
+                a.click(); 
+                console.log('[content/router] Download triggered for', fileName);
+                setTimeout(()=>{ document.body.removeChild(a); URL.revokeObjectURL(url); }, 4000);
+              } catch (e) { 
+                console.error('[content/router] Download trigger failed', e);
+              }
+              const completedMsg = { type: MessageType.VIDEO_RECORDING_STATUS, status: 'completed' as const, index: idx, fileName, mode };
+              chrome.runtime.sendMessage(completedMsg);
               delete activeRecordings[idx];
             };
             recorder.onerror = (e: Event) => {
               const errObj = e as unknown as { error?: { message?: string }; message?: string };
-              chrome.runtime.sendMessage({ type: MessageType.VIDEO_RECORDING_STATUS, status: 'error', index: idx, error: (errObj?.error?.message || errObj?.message || '录制错误'), mode });
+              const errorMsg = { type: MessageType.VIDEO_RECORDING_STATUS, status: 'error' as const, index: idx, error: (errObj?.error?.message || errObj?.message || '录制错误'), mode };
+              chrome.runtime.sendMessage(errorMsg);
               delete activeRecordings[idx];
             };
-            activeRecordings[idx] = { recorder, mode, startedAt: Date.now(), chunks };
+
+            // Attach listeners for robustness
+            const listeners: Record<string, EventListener> = {
+              pause: () => {
+                if (recorder.state === 'recording') {
+                  console.log('[content/router] Video paused, pausing recorder');
+                  recorder.pause();
+                }
+              },
+              play: () => {
+                if (recorder.state === 'paused') {
+                  console.log('[content/router] Video resumed, resuming recorder');
+                  recorder.resume();
+                }
+              },
+              ended: () => { console.log('[content/router] Video ended, stopping recorder'); recorder.stop(); },
+              emptied: () => { console.log('[content/router] Video emptied, stopping recorder'); recorder.stop(); },
+              loadstart: () => { console.log('[content/router] Video loadstart (src change), stopping recorder'); recorder.stop(); }
+            };
+            Object.entries(listeners).forEach(([evt, fn]) => video.addEventListener(evt, fn));
+
+            activeRecordings[idx] = { recorder, mode, startedAt, chunks, element: video, listeners };
             recorder.start();
-            sendResponse({ success: true });
+            sendResponse({ success: true, startedAt });
           } catch (e: unknown) {
             sendResponse({ success: false, error: (e as Error)?.message || '启动录制失败' });
           }
@@ -227,8 +310,8 @@ export function initContentScript() {
           }
           break;
       }
-      // 侧边栏旧版使用的直链请求（枚举中暂未收录，保持兼容）
-      case 'REQUEST_VIDEO_SOURCES': {
+      // 侧边栏视频直链请求
+      case MessageType.REQUEST_VIDEO_SOURCES: {
         try {
           const idx: number = typeof message?.index === 'number' ? message.index : 0;
           const list = getVideoSourceCandidatesByIndex(idx);
@@ -251,6 +334,15 @@ export function initContentScript() {
         sendResponse({ success: !!v });
         break;
       }
+      case 'SCAN_PAGE_SOURCES': {
+        try {
+          const files = scanPageSources();
+          sendResponse({ success: true, files });
+        } catch (e: unknown) {
+          sendResponse({ success: false, error: (e as Error)?.message || '扫描资源失败' });
+        }
+        break;
+      }
       default:
         break;
     }
@@ -261,32 +353,196 @@ export function initContentScript() {
   // 默认不安装重型监听；由 ENABLE_FEATURES 决定是否启用
 }
 
-function tryInstallDynamicWatchers(features: Record<string, boolean>) {
-  if (!(features.spaWatchers || autoScanEnabledGlobal)) return;
+// ===== 节流与批处理增强 =====
+let aggTimer: number | null = null;
+const aggImagesAdded = new Map<string, ImageScanItem>();
+const aggImagesRemoved = new Set<string>();
+const aggAudioAdded = new Map<string, AudioItem>();
+const aggAudioRemoved = new Set<string>();
+const aggVideoAdded = new Map<number, VideoItemDTO>();
+const aggVideoRemoved = new Set<number>();
+let baseImageKeys = new Set<string>();
+let baseAudioUrls = new Set<string>();
+// Map<index, src> to detect content changes even if element ID is reused
+const baseVideoState = new Map<number, string>();
+
+function flushAggregated(features: Record<string, boolean>) {
+  aggTimer = null;
+  // 最终一次重新扫描用于最新完整列表（降低 UI 不一致风险）
+  const finalImages = features.image ? scanImages() : undefined;
+  const finalAudio = features.audio ? scanAudioUrls() : undefined;
+  const finalVideos = features.video ? scanVideoElements() : undefined;
+  // 更新基准集合
+  if (finalImages) baseImageKeys = new Set(finalImages.map(i => buildImageKeyDiff(i)));
+  if (finalAudio) baseAudioUrls = new Set(finalAudio.map(a => a.url));
+  if (finalVideos) {
+    baseVideoState.clear();
+    finalVideos.forEach(v => baseVideoState.set(v.index, v.src || ''));
+    // 同步修剪反向索引，避免已销毁的视频元素因强引用而无法 GC（内存泄漏）
+    const liveIds = new Set(finalVideos.map(v => v.index));
+    for (const key of Object.keys(reverseVideoMap)) {
+      const id = Number(key);
+      if (!liveIds.has(id)) delete reverseVideoMap[id];
+    }
+  }
+  const diff: ResourceDiff = {};
+  if (aggImagesAdded.size || aggImagesRemoved.size) diff.images = { added: Array.from(aggImagesAdded.values()), removed: Array.from(aggImagesRemoved) };
+  if (aggAudioAdded.size || aggAudioRemoved.size) diff.audio = { added: Array.from(aggAudioAdded.values()), removed: Array.from(aggAudioRemoved) };
+  if (aggVideoAdded.size || aggVideoRemoved.size) diff.videos = { added: Array.from(aggVideoAdded.values()), removed: Array.from(aggVideoRemoved) };
+  if (diff.images || diff.audio || diff.videos) {
+    const payload: { images?: ImageScanItem[]; audio?: AudioItem[]; videos?: VideoItemDTO[]; diff?: ResourceDiff; frameId?: number } = {};
+    if (finalImages) payload.images = finalImages;
+    if (finalAudio) payload.audio = finalAudio;
+    if (finalVideos) payload.videos = finalVideos;
+    payload.diff = diff;
+    payload.frameId = selfFrameId;
+    try { chrome.runtime.sendMessage({ type: MessageType.RESOURCE_UPDATE, payload }); } catch { /* noop */ }
+  }
+  // 清空聚合状态
+  aggImagesAdded.clear(); aggImagesRemoved.clear();
+  aggAudioAdded.clear(); aggAudioRemoved.clear();
+  aggVideoAdded.clear(); aggVideoRemoved.clear();
+}
+
+function aggregateDiff(features: Record<string, boolean>) {
   try {
-    installResiliencyWatchers(() => {
-      // 使用抽象的聚合与差异检测，避免重复发送完全相同的快照
+    if (features.image) {
+      const imgs = scanImages();
+      const currentKeys = new Set(imgs.map(i => buildImageKeyDiff(i)));
+      // 新增
+      imgs.forEach(i => { const k = buildImageKeyDiff(i); if (!baseImageKeys.has(k)) aggImagesAdded.set(k, i); });
+      // 移除
+      baseImageKeys.forEach(k => { if (!currentKeys.has(k)) aggImagesRemoved.add(k); });
+    }
+    if (features.audio) {
+      const aud = scanAudioUrls();
+      const currentUrls = new Set(aud.map(a => a.url));
+      aud.forEach(a => { if (!baseAudioUrls.has(a.url)) aggAudioAdded.set(a.url, a); });
+      baseAudioUrls.forEach(u => { if (!currentUrls.has(u)) aggAudioRemoved.add(u); });
+    }
+    if (features.video) {
+      const vids = scanVideoElements();
+      const currentIds = new Set(vids.map(v => v.index));
+      vids.forEach(v => { 
+        const oldSrc = baseVideoState.get(v.index);
+        // Detect new ID OR reused ID with changed src
+        if (!baseVideoState.has(v.index) || oldSrc !== v.src) {
+          aggVideoAdded.set(v.index, v); 
+        }
+      });
+      baseVideoState.forEach((_, id) => { if (!currentIds.has(id)) aggVideoRemoved.add(id); });
+    }
+  } catch { /* noop */ }
+  if (!aggTimer) {
+    aggTimer = (setTimeout(() => flushAggregated(features), 350) as unknown) as number; // 350ms 节流窗口
+  }
+}
+
+// 幂等保护标记：ENABLE_FEATURES 会被侧边栏 main + 各面板 mount 重复发送，
+// watcher 只允许安装一次，避免 MutationObserver / history 钩子 / play 监听无限叠加
+let resiliencyWatchersInstalled = false;
+let playCaptureListenerInstalled = false;
+let networkObserverInstalled = false;
+
+// 网络资源加载监听：懒加载媒体（src 属性切换不触发 MutationObserver 的 childList 监听）
+// 通过 PerformanceObserver 的 resource 条目捕获。仅关注媒体扩展名，
+// 排除 ts/m4s 分片，避免长视频 HLS 拉流时的高频触发。
+const NETWORK_MEDIA_RE = /\.(mp4|webm|mkv|mov|flv|m3u8|mpd|mp3|m4a|aac|flac|wav|ogg|opus|jpg|jpeg|png|webp|gif|avif|svg)(?:$|[?#])/i;
+
+function installNetworkObserver(features: Record<string, boolean>) {
+  if (networkObserverInstalled || typeof PerformanceObserver === 'undefined') return;
+  try {
+    const po = new PerformanceObserver((list) => {
+      let hit = false;
       try {
-        const gathered = gatherResources(features);
-        if (gathered.changed) {
-          const { images, audio, videos } = gathered;
-          const payload: { images?: ImageScanItem[]; audio?: AudioItem[]; videos?: VideoItemDTO[] } = {};
-          if (images) payload.images = images;
-          if (audio) payload.audio = audio;
-          if (videos) payload.videos = videos;
-          if (payload.images || payload.audio || payload.videos) {
-            try { chrome.runtime.sendMessage({ type: MessageType.RESOURCE_UPDATE, payload }); } catch { /* noop */ }
-          }
+        for (const entry of list.getEntries()) {
+          const u = (entry as PerformanceResourceTiming).name || '';
+          if (NETWORK_MEDIA_RE.test(u)) { hit = true; break; }
         }
       } catch { /* noop */ }
-      try { if (features.playbackEvents || features.video) attachVideoPlaybackListeners(); } catch { /* noop */ }
+      if (hit) aggregateDiff(features);
     });
+    po.observe({ entryTypes: ['resource'] });
+    networkObserverInstalled = true;
   } catch { /* noop */ }
 }
 
+function tryInstallDynamicWatchers(features: Record<string, boolean>) {
+  if (!(features.spaWatchers || autoScanEnabledGlobal)) return;
+  try {
+    if (!resiliencyWatchersInstalled) {
+      resiliencyWatchersInstalled = true;
+      installResiliencyWatchers(() => {
+        aggregateDiff(features); // 聚合增量并节流发送
+        try { if (features.playbackEvents || features.video) attachVideoPlaybackListeners(); } catch { /* noop */ }
+      });
+    }
+    // 网络资源增量监听（懒加载媒体），同样只装一次
+    installNetworkObserver(features);
+
+    // Global capture listener for 'play' to detect untracked videos immediately
+    if (features.video && !playCaptureListenerInstalled) {
+      playCaptureListenerInstalled = true;
+      document.addEventListener('play', (e) => {        const target = e.target as HTMLVideoElement;
+        if (target && target.tagName === 'VIDEO') {
+          // 1. Stop recordings of OTHER videos (Video Switch logic)
+          Object.keys(activeRecordings).forEach(k => {
+            const idx = Number(k);
+            const rec = activeRecordings[idx];
+            if (rec && rec.element !== target) {
+              console.log('[content/router] New video playing, stopping other recording:', idx);
+              rec.recorder.stop();
+            }
+          });
+
+          const id = stableVideoIdMap.get(target);
+          // If unknown video OR known video with changed src
+          if (id === undefined || (baseVideoState.has(id) && baseVideoState.get(id) !== (target.currentSrc || target.src || ''))) {
+            console.debug('[content/router] Detected untracked video playing, triggering scan');
+            aggregateDiff(features);
+          }
+        }
+      }, true); // Capture phase
+    }
+  } catch { /* noop */ }
+}
+
+// Global navigation/unload handler to stop all recordings
+function stopAllRecordings(reason: string) {
+  Object.keys(activeRecordings).forEach(k => {
+    const idx = Number(k);
+    const rec = activeRecordings[idx];
+    if (rec && rec.recorder.state !== 'inactive') {
+      console.log(`[content/router] Stopping recording ${idx} due to ${reason}`);
+      rec.recorder.stop();
+    }
+  });
+}
+window.addEventListener('beforeunload', () => stopAllRecordings('unload'));
+window.addEventListener('popstate', () => stopAllRecordings('navigation'));
+window.addEventListener('hashchange', () => stopAllRecordings('navigation'));
+// Hook into history API via installResiliencyWatchers is already done for scanning, 
+// but we might want immediate stop. 
+// Since installResiliencyWatchers uses a debounce, we should add immediate listeners here if possible.
+// But history.pushState/replaceState are patched in installResiliencyWatchers.
+// We can add a global listener for the custom event if we dispatched one, but we didn't.
+// Let's just rely on the fact that usually navigation stops the video or unloads the page.
+// If it's a SPA navigation, the video might stay or be removed.
+// If removed -> 'emptied'/'ended' listener on video will trigger stop.
+// If reused -> 'loadstart' listener on video will trigger stop.
+// So we are mostly covered for SPA video switch/reuse.
+// The explicit 'popstate'/'hashchange' is good for extra safety.
+
 async function loadAutoScanSetting(): Promise<boolean> {
+  // v2 为唯一真源；仅存在旧版 v1 时回退读取，保持升级兼容
   return new Promise(resolve => {
-    try { chrome.storage.local.get('global_settings_v1', res => { resolve(!!res?.global_settings_v1?.autoScan); }); } catch { resolve(false); }
+    try {
+      chrome.storage.local.get(['global_settings_v2', 'global_settings_v1'], res => {
+        const v2 = res?.global_settings_v2 as { autoScan?: boolean } | undefined;
+        const v1 = res?.global_settings_v1 as { autoScan?: boolean } | undefined;
+        resolve(typeof v2?.autoScan === 'boolean' ? v2.autoScan : !!v1?.autoScan);
+      });
+    } catch { resolve(false); }
   });
 }
 
@@ -309,8 +565,9 @@ function scanVideoElements(): VideoItemDTO[] {
         muted: !!v.muted,
         visible,
         directSources,
-        directSourceCount: directSources.length
-      };
+        directSourceCount: directSources.length,
+        paused: !!v.paused
+      } as VideoItemDTO;
       list.push(item);
       ensurePlaybackListener(v, stableId);
     });
@@ -360,7 +617,6 @@ function controlVideoByIndex(index: number, action: VideoControlAction): boolean
   try {
     if (action === 'play') v.play();
     else if (action === 'pause') v.pause();
-    else if (action === 'toggle') { v.paused ? v.play() : v.pause(); }
     return true;
   } catch (_) { return false; }
 }
@@ -393,11 +649,13 @@ function getVideoSourceCandidatesByIndex(index?: number): VideoSourceCandidate[]
 function normalizeHttpUrl(u: string): string | '' {
   const trimmed = (u || '').trim();
   if (!trimmed) return '';
-  if (/^(blob:|data:|mediasource:|javascript:|chrome-extension:)/i.test(trimmed)) return '';
+  // 允许 blob: 协议，以便上层能识别当前视频为流式资源
+  if (/^(data:|mediasource:|javascript:|chrome-extension:)/i.test(trimmed)) return '';
   try {
-    const absolute = new URL(trimmed, document.baseURI).href;
-    if (!/^https?:/i.test(absolute)) return '';
-    return absolute;
+    const urlObj = new URL(trimmed, document.baseURI);
+    if (urlObj.protocol === 'blob:') return trimmed;
+    if (!/^https?:/i.test(urlObj.href)) return '';
+    return urlObj.href;
   } catch (_) {
     return '';
   }
@@ -419,13 +677,9 @@ function deepQuerySelectorAll<T extends Element>(selector: string, root: Documen
 }
 
 // ============== SPA 导航与动态内容监听（带去抖） ==============
-const NAV_FLAG = '__ext_nav_watchers_installed__';
+// 移除全局 flag 检查，允许重载后重新挂载监听器（History API 钩子会叠加，但这是开发模式下的妥协）
 let debouncedTimer: number | null = null;
 function installResiliencyWatchers(onChange: () => void) {
-  const g = globalThis as unknown as Record<string, unknown>;
-  if (g[NAV_FLAG]) return; // 避免重复安装
-  g[NAV_FLAG] = true;
-
   const schedule = (reason: string) => {
     try { if (debouncedTimer) clearTimeout(debouncedTimer); } catch (e) { void 0; }
     try { console.debug('[content/router] 计划重扫:', reason); } catch (e) { void 0; }
@@ -478,67 +732,6 @@ function installResiliencyWatchers(onChange: () => void) {
  *  - 音频：绝对 url
  *  - 视频：稳定 index (WeakMap 分配)
  */
-interface GatherResult {
-  images?: ImageScanItem[];
-  audio?: AudioItem[];
-  videos?: VideoItemDTO[];
-  changed: boolean;
-}
-
-let prevImageKeys = new Set<string>();
-let prevAudioUrls = new Set<string>();
-let prevVideoIds = new Set<number>();
-
-function buildImageKey(i: ImageScanItem): string { return `${i.url}#${i.width}x${i.height}#${i.kind}`; }
-
-function gatherResources(features: Record<string, boolean>): GatherResult {
-  const result: GatherResult = { changed: false };
-  let currentImageKeys: Set<string> | null = null;
-  let currentAudioUrls: Set<string> | null = null;
-  let currentVideoIds: Set<number> | null = null;
-
-  try {
-    if (features.image) {
-      const images = scanImages();
-      result.images = images;
-      currentImageKeys = new Set(images.map(buildImageKey));
-    }
-  } catch { /* noop */ }
-  try {
-    if (features.audio) {
-      const audio = scanAudioUrls();
-      result.audio = audio;
-      currentAudioUrls = new Set(audio.map(a => a.url));
-    }
-  } catch { /* noop */ }
-  try {
-    if (features.video) {
-      const videos = scanVideoElements();
-      result.videos = videos;
-      currentVideoIds = new Set(videos.map(v => v.index));
-    }
-  } catch { /* noop */ }
-
-  // 计算差异：任一类别有变动即视为 changed
-  let changed = false;
-  if (currentImageKeys) {
-    if (currentImageKeys.size !== prevImageKeys.size) changed = true;
-    else for (const k of currentImageKeys) { if (!prevImageKeys.has(k)) { changed = true; break; } }
-  }
-  if (!changed && currentAudioUrls) {
-    if (currentAudioUrls.size !== prevAudioUrls.size) changed = true;
-    else for (const k of currentAudioUrls) { if (!prevAudioUrls.has(k)) { changed = true; break; } }
-  }
-  if (!changed && currentVideoIds) {
-    if (currentVideoIds.size !== prevVideoIds.size) changed = true;
-    else for (const k of currentVideoIds) { if (!prevVideoIds.has(k)) { changed = true; break; } }
-  }
-
-  // 更新快照集
-  if (currentImageKeys) prevImageKeys = currentImageKeys;
-  if (currentAudioUrls) prevAudioUrls = currentAudioUrls;
-  if (currentVideoIds) prevVideoIds = currentVideoIds;
-
-  result.changed = changed;
-  return result;
-}
+// 旧 gatherResources 与增量 diff 逻辑已被批处理聚合取代，仅保留差异 key 构造与类型供聚合使用
+interface ResourceDiff { images?: { added: ImageScanItem[]; removed: string[] }; audio?: { added: AudioItem[]; removed: string[] }; videos?: { added: VideoItemDTO[]; removed: number[] }; }
+function buildImageKeyDiff(i: ImageScanItem): string { return `${i.url}#${i.width}x${i.height}#${i.kind}`; }

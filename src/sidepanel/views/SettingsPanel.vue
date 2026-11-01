@@ -1,67 +1,277 @@
 <template>
-  <BaseCard title="系统设置" subtitle="统一配置扫描、命名与并发" padded>
-    <form class="settings-form" @submit.prevent>
-      <FormField label="自动扫描" hint="打开后将尝试增量发现新增资源" meta="autoScan">
-        <input type="checkbox" v-model="state.autoScan" />
-      </FormField>
-      <FormField label="命名模板" hint="支持变量: {site} {title} {date} {time} {datetime} {index}" meta="namingTemplate">
-        <input type="text" v-model="state.namingTemplate" placeholder="{site}_{title}_{datetime}" />
-      </FormField>
-      <FormField label="并发上限" hint="下载同时进行的最大任务数 (1-10)" meta="maxConcurrent">
-        <input type="number" min="1" max="10" v-model.number="state.maxConcurrent" />
-      </FormField>
-      <div class="preview-block">
-        <span class="preview-label">预览文件名:</span>
-        <code class="preview-value">{{ previewFilename }}</code>
+  <BaseCard title="系统设置" subtitle="配置扫描策略、命名模板与并发" padded>
+    <div class="settings-form">
+      <!-- Toggle Settings -->
+      <div class="setting-section">
+        <div class="setting-row">
+          <div class="setting-row__info">
+            <div class="setting-row__label">自动扫描</div>
+            <div class="setting-row__hint">打开后将尝试增量发现新增资源</div>
+          </div>
+          <div class="toggle" :class="{ 'is-on': state.autoScan }" @click="state.autoScan = !state.autoScan" role="switch" :aria-checked="state.autoScan"></div>
+        </div>
+        <div class="setting-row">
+          <div class="setting-row__info">
+            <div class="setting-row__label">显示快捷键提示</div>
+            <div class="setting-row__hint">搜索栏下方快捷键帮助是否显示</div>
+          </div>
+          <div class="toggle" :class="{ 'is-on': state.showShortcutHints }" @click="state.showShortcutHints = !state.showShortcutHints" role="switch" :aria-checked="state.showShortcutHints"></div>
+        </div>
       </div>
-    </form>
+
+      <!-- Text / Number Settings -->
+      <div class="setting-section">
+        <div class="setting-row setting-row--vertical">
+          <div class="setting-row__info">
+            <div class="setting-row__label">命名模板</div>
+            <div class="setting-row__hint">支持变量: {site} {title} {date} {time} {datetime} {index}</div>
+          </div>
+          <input
+            type="text"
+            class="setting-input setting-input--full"
+            v-model="state.namingTemplate"
+            placeholder="{site}_{title}_{datetime}"
+          />
+        </div>
+        <div class="setting-row">
+          <div class="setting-row__info">
+            <div class="setting-row__label">并发上限</div>
+            <div class="setting-row__hint">同时进行的最大下载任务数 (1-10)</div>
+          </div>
+          <input
+            type="number"
+            class="setting-input setting-input--num"
+            min="1"
+            max="10"
+            v-model.number="state.maxConcurrent"
+          />
+        </div>
+      </div>
+
+      <!-- Preview -->
+      <div class="preview-block">
+        <div class="preview-block__label">预览文件名</div>
+        <code class="preview-block__value">{{ previewFilename }}</code>
+      </div>
+
+      <!-- History -->
+      <div class="history-block">
+        <div class="history-block__info">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <span>已记录下载历史 <strong>{{ historyCount }}</strong> 条</span>
+        </div>
+        <button class="btn-clear" @click="handleClearHistory" :disabled="historyCount === 0">清除历史</button>
+      </div>
+
+      <!-- AI 模型配置 -->
+      <div class="setting-section">
+        <div class="section-title">🤖 AI 模型配置</div>
+
+        <div class="setting-row setting-row--vertical">
+          <div class="setting-row__label">服务提供商</div>
+          <select class="setting-input" v-model="state.ai.provider" @change="onProviderChange">
+            <option value="openai">OpenAI / 兼容接口</option>
+            <option value="deepseek">DeepSeek</option>
+            <option value="anthropic">Anthropic Claude</option>
+            <option value="gemini">Google Gemini</option>
+            <option value="custom">自定义接口</option>
+          </select>
+        </div>
+
+        <div class="setting-row setting-row--vertical">
+          <div class="setting-row__label">API Key</div>
+          <div class="api-key-row">
+            <input
+              :type="showApiKey ? 'text' : 'password'"
+              class="setting-input setting-input--full"
+              v-model="state.ai.apiKey"
+              placeholder="sk-..."
+            />
+            <button class="btn-eye" @click="showApiKey=!showApiKey">{{ showApiKey ? '🙈' : '👁' }}</button>
+          </div>
+        </div>
+
+        <div class="setting-row setting-row--vertical">
+          <div class="setting-row__label">API Base URL</div>
+          <input
+            type="text"
+            class="setting-input setting-input--full"
+            v-model="state.ai.baseUrl"
+            placeholder="https://api.openai.com/v1"
+          />
+          <div class="setting-row__hint">支持任何 OpenAI 兼容接口（如 Ollama、LM Studio）</div>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-row__info">
+            <div class="setting-row__label">Chat 模型</div>
+            <div class="setting-row__hint">用于字幕翻译、AI 助手</div>
+          </div>
+          <input
+            type="text"
+            class="setting-input setting-input--med"
+            v-model="state.ai.model"
+            placeholder="gpt-4o-mini"
+          />
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-row__info">
+            <div class="setting-row__label">Whisper 模型</div>
+            <div class="setting-row__hint">语音转文字（字幕提取）</div>
+          </div>
+          <input
+            type="text"
+            class="setting-input setting-input--med"
+            v-model="state.ai.whisperModel"
+            placeholder="whisper-1"
+          />
+        </div>
+
+        <div class="setting-row setting-row--vertical" style="margin-top:8px">
+          <div class="setting-row__label">翻译服务</div>
+          <select class="setting-input" v-model="state.ai.translateProvider">
+            <option value="openai">OpenAI（使用上方 Key）</option>
+            <option value="deepl">DeepL</option>
+            <option value="baidu">百度翻译</option>
+          </select>
+        </div>
+
+        <template v-if="state.ai.translateProvider === 'deepl'">
+          <div class="setting-row setting-row--vertical">
+            <div class="setting-row__label">DeepL API Key</div>
+            <input type="password" class="setting-input setting-input--full" v-model="state.ai.deeplApiKey" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx:fx" />
+          </div>
+        </template>
+
+        <template v-if="state.ai.translateProvider === 'baidu'">
+          <div class="setting-row setting-row--vertical">
+            <div class="setting-row__label">百度 App ID</div>
+            <input type="text" class="setting-input setting-input--full" v-model="state.ai.baiduAppId" placeholder="2015063000000001" />
+          </div>
+          <div class="setting-row setting-row--vertical">
+            <div class="setting-row__label">百度 Secret Key</div>
+            <input type="password" class="setting-input setting-input--full" v-model="state.ai.baiduSecretKey" placeholder="12345678" />
+          </div>
+        </template>
+
+        <div class="ai-test-row">
+          <button class="btn-test" @click="testAI" :disabled="testingAI || !state.ai.apiKey">
+            <span v-if="testingAI" class="test-spin"></span>
+            {{ testingAI ? '测试中…' : '测试连接' }}
+          </button>
+          <span class="test-result" :class="testResult.ok ? 'ok' : 'fail'" v-if="testResult.msg">
+            {{ testResult.ok ? '✓' : '✗' }} {{ testResult.msg }}
+          </span>
+        </div>
+      </div>
+
+      <!-- Save Actions -->
+      <div class="save-actions">
+        <button class="btn-reset" @click="resetToDefault">恢复默认</button>
+        <button class="btn-save" @click="immediateSave">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+          保存设置
+        </button>
+      </div>
+    </div>
   </BaseCard>
 </template>
 
 <script lang="ts">
-import { defineComponent, reactive, computed, watch } from 'vue';
+import { defineComponent, reactive, computed, watch, ref, onMounted } from 'vue';
 import { BaseCard, FormField } from '../components/base';
 import { formatFilename } from '@/utils/format';
 import { loadSettings, saveSettings, type ExtensionSettings } from '../services/settings';
+import { getHistoryCount, clearHistory, loadHistory } from '../services/downloadHistory';
 import { sendRuntimeMessage } from '../utils/chromeMessaging';
 import { MessageType } from '@/messaging';
-
-// 增强：添加显式“立即保存”按钮与重置功能，避免用户疑惑自动保存时机。
-// 统一使用 services/settings.ts 中的加载与保存逻辑，减少重复代码。
 
 export default defineComponent({
   name: 'SettingsPanel',
   components: { BaseCard, FormField },
   setup() {
-    const state = reactive<ExtensionSettings>({ namingTemplate: '{site}_{title}_{datetime}', autoScan: false, maxConcurrent: 3 });
+    const state = reactive<ExtensionSettings>({
+      namingTemplate: '{site}_{title}_{datetime}', autoScan: false, maxConcurrent: 3, showShortcutHints: true,
+      ai: { provider:'openai', apiKey:'', baseUrl:'https://api.openai.com/v1', model:'gpt-4o-mini',
+            whisperModel:'whisper-1', translateProvider:'openai', deeplApiKey:'', baiduAppId:'', baiduSecretKey:'' }
+    });
+    const showApiKey = ref(false);
+    const testingAI  = ref(false);
+    const testResult = ref({ ok: false, msg: '' });
+    const historyCount = ref(0);
+
     loadSettings().then(s => { Object.assign(state, s); });
+
+    onMounted(async () => {
+      await loadHistory();
+      historyCount.value = getHistoryCount();
+    });
+
+    async function handleClearHistory() {
+      if (confirm('确定要清除所有下载历史记录吗？此操作不可恢复。')) {
+        await clearHistory();
+        historyCount.value = getHistoryCount();
+      }
+    }
 
     let saveTimer: number | null = null;
     watch(state, () => {
       if (saveTimer) window.clearTimeout(saveTimer);
-      // 防抖自动保存
-      saveTimer = window.setTimeout(() => { saveSettings(state); saveTimer = null; }, 400);
+      saveTimer = window.setTimeout(async () => {
+        await saveSettings(state);
+        try { await sendRuntimeMessage({ type: MessageType.SETTINGS_UPDATE, payload: { ...state } }); } catch {}
+        saveTimer = null;
+      }, 400);
     }, { deep: true });
 
-    function immediateSave(){
+    function immediateSave() {
       if (saveTimer) { window.clearTimeout(saveTimer); saveTimer = null; }
       saveSettings(state);
+      try { sendRuntimeMessage({ type: MessageType.SETTINGS_UPDATE, payload: { ...state } }); } catch {}
     }
 
-    function resetToDefault(){
+    function resetToDefault() {
       state.namingTemplate = '{site}_{title}_{datetime}';
       state.autoScan = false;
       state.maxConcurrent = 3;
-      immediateSave();
+      state.showShortcutHints = true;
     }
 
     const previewFilename = computed(() => {
-      const docTitle = document.title || 'page';
-      const site = (() => { try { return new URL(location.href).hostname.replace(/^www\./,''); } catch { return 'site'; } })();
-      return formatFilename(state.namingTemplate, { site, title: docTitle.slice(0,40), index: 1 });
+      try {
+        return formatFilename(state.namingTemplate, { site: 'youtube', title: 'my_video', index: '001' });
+      } catch { return state.namingTemplate; }
     });
 
-    return { state, previewFilename, immediateSave, resetToDefault };
+    function onProviderChange() {
+      const presets: Record<string, { baseUrl: string; model: string }> = {
+        openai:    { baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
+        deepseek:  { baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
+        anthropic: { baseUrl: 'https://api.anthropic.com/v1', model: 'claude-3-5-haiku-20241022' },
+        gemini:    { baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-1.5-flash' },
+        custom:    { baseUrl: '', model: '' },
+      };
+      const p = presets[state.ai.provider];
+      if (p) { state.ai.baseUrl = p.baseUrl; state.ai.model = p.model; }
+    }
+
+    async function testAI() {
+      testingAI.value = true; testResult.value = { ok: false, msg: '' };
+      try {
+        const resp = await fetch(`${state.ai.baseUrl.replace(/\/$/, '')}/models`, {
+          headers: { 'Authorization': `Bearer ${state.ai.apiKey}`, 'Content-Type': 'application/json' }
+        });
+        testResult.value = resp.ok
+          ? { ok: true,  msg: '连接成功 ✓' }
+          : { ok: false, msg: `HTTP ${resp.status}` };
+      } catch (e: any) {
+        testResult.value = { ok: false, msg: e?.message ?? '连接失败' };
+      } finally { testingAI.value = false; }
+    }
+
+    return { state, historyCount, handleClearHistory, immediateSave, resetToDefault, previewFilename,
+             showApiKey, testingAI, testResult, onProviderChange, testAI };
   }
 });
 </script>
@@ -70,21 +280,222 @@ export default defineComponent({
 .settings-form {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-}
-.preview-block {
-  display: flex;
-  flex-direction: column;
-  font-size: 12px;
   gap: 6px;
-  background: rgba(255,255,255,0.04);
-  padding: 10px 12px;
-  border-radius: var(--sp-radius-sm);
 }
-.preview-label { color: var(--sp-color-muted); }
-.preview-value { color: var(--sp-color-heading); word-break: break-all; }
-.settings-actions { display:flex; gap:8px; margin-top:8px; }
-.settings-actions button { background:#203347; color:#cdd9e5; border:1px solid #335578; padding:4px 10px; font-size:12px; border-radius:4px; cursor:pointer; }
-.settings-actions button:hover { background:#2a4461; }
-.settings-actions button:active { background:#183246; }
+
+/* Section container */
+.setting-section {
+  border: 1px solid var(--sp-color-border);
+  border-radius: var(--sp-radius-lg);
+  overflow: hidden;
+  background: var(--sp-color-surface);
+}
+
+/* Individual row */
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--sp-color-border);
+}
+
+.setting-row:last-child { border-bottom: none; }
+
+.setting-row--vertical {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.setting-row__info { flex: 1; min-width: 0; }
+
+.setting-row__label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--sp-color-text);
+}
+
+.setting-row__hint {
+  font-size: 11px;
+  color: var(--sp-color-muted);
+  margin-top: 2px;
+}
+
+/* Toggle switch */
+.toggle {
+  width: 34px;
+  height: 20px;
+  background: var(--sp-color-surface);
+  border: 1px solid var(--sp-color-border-strong);
+  border-radius: 999px;
+  cursor: pointer;
+  position: relative;
+  transition: all var(--sp-transition-fast);
+  flex-shrink: 0;
+}
+
+.toggle.is-on {
+  background: var(--sp-color-primary);
+  border-color: transparent;
+}
+
+.toggle::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--sp-color-muted);
+  transition: left var(--sp-transition-fast), background var(--sp-transition-fast);
+}
+
+.toggle.is-on::after {
+  left: 16px;
+  background: white;
+}
+
+/* Inputs */
+.setting-input {
+  background: var(--sp-color-bg-elevated);
+  border: 1px solid var(--sp-color-border-strong);
+  border-radius: var(--sp-radius-sm);
+  color: var(--sp-color-text);
+  font-size: 11px;
+  font-family: var(--sp-font-family);
+  padding: 5px 10px;
+  height: 28px;
+  outline: none;
+  transition: border-color var(--sp-transition-fast);
+}
+
+.setting-input:focus {
+  border-color: var(--sp-color-primary);
+  box-shadow: 0 0 0 2px var(--sp-color-primary-light);
+}
+
+.setting-input--full { width: 100%; }
+.setting-input--num { width: 60px; text-align: center; }
+
+/* Preview block */
+.preview-block {
+  padding: 10px 14px;
+  background: var(--sp-color-bg-elevated);
+  border: 1px solid var(--sp-color-border);
+  border-radius: var(--sp-radius-lg);
+}
+
+.preview-block__label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--sp-color-muted);
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.preview-block__value {
+  font-family: var(--sp-font-mono, monospace);
+  font-size: 11px;
+  color: var(--sp-color-primary);
+  word-break: break-all;
+}
+
+/* History block */
+.history-block {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--sp-color-surface);
+  border: 1px solid var(--sp-color-border);
+  border-radius: var(--sp-radius-lg);
+  font-size: 12px;
+  color: var(--sp-color-text-secondary);
+}
+
+.history-block__info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--sp-color-muted);
+}
+
+.history-block__info strong { color: var(--sp-color-text); }
+
+.btn-clear {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--sp-color-danger);
+  background: var(--sp-color-danger-light);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  border-radius: var(--sp-radius-sm);
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: all var(--sp-transition-fast);
+  white-space: nowrap;
+  font-family: var(--sp-font-family);
+}
+
+.btn-clear:hover:not(:disabled) { background: var(--sp-color-danger); color: white; border-color: transparent; }
+.btn-clear:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Save actions */
+.save-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.btn-reset {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--sp-color-muted);
+  background: transparent;
+  border: 1px solid var(--sp-color-border-strong);
+  border-radius: var(--sp-radius-sm);
+  padding: 5px 12px;
+  cursor: pointer;
+  font-family: var(--sp-font-family);
+  transition: all var(--sp-transition-fast);
+}
+
+.btn-reset:hover { background: var(--sp-color-surface); color: var(--sp-color-text); }
+
+.btn-save {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 500;
+  color: white;
+  background: var(--sp-color-primary);
+  border: none;
+  border-radius: var(--sp-radius-sm);
+  padding: 5px 14px;
+  cursor: pointer;
+  font-family: var(--sp-font-family);
+  transition: all var(--sp-transition-fast);
+  box-shadow: 0 1px 4px rgba(59, 138, 255, 0.3);
+}
+
+.btn-save:hover { background: var(--sp-color-primary-hover); box-shadow: 0 2px 8px rgba(59, 138, 255, 0.4); }
+.section-title { font-size:12px; font-weight:700; color:var(--sp-color-heading); margin-bottom:10px; padding-bottom:6px; border-bottom:1px solid var(--sp-color-border); }
+.api-key-row { display:flex; gap:6px; align-items:center; }
+.btn-eye { width:28px; height:28px; border:1px solid var(--sp-color-border-strong); border-radius:var(--sp-radius-sm); background:var(--sp-color-surface); cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:14px; flex-shrink:0; }
+.setting-input--med { width:130px; }
+.ai-test-row { display:flex; align-items:center; gap:8px; margin-top:8px; }
+.btn-test { display:inline-flex; align-items:center; gap:5px; padding:5px 12px; border:1px solid var(--sp-color-primary); border-radius:var(--sp-radius-sm); background:var(--sp-color-primary-light); color:var(--sp-color-primary); font-size:11px; font-weight:600; cursor:pointer; font-family:var(--sp-font-family); transition:all var(--sp-transition-fast); }
+.btn-test:hover:not(:disabled) { background:var(--sp-color-primary); color:white; }
+.btn-test:disabled { opacity:.4; cursor:not-allowed; }
+.test-spin { width:10px; height:10px; border-radius:50%; border:1.5px solid rgba(99,102,241,.3); border-top-color:var(--sp-color-primary); animation:spin .7s linear infinite; }
+@keyframes spin { to { transform:rotate(360deg); } }
+.test-result { font-size:11px; font-weight:500; }
+.test-result.ok { color:var(--sp-color-success); }
+.test-result.fail { color:var(--sp-color-danger); }
+
 </style>

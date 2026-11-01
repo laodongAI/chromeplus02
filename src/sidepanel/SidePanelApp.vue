@@ -1,195 +1,247 @@
 <template>
-  <div class="sidepanel-app">
-    <header class="sidepanel-app__header">
-      <div>
-        <p class="kicker">媒体采集控制台</p>
-        <h1>全站多媒体抓取中心</h1>
-        <p class="lede">按功能导航切换视频/图片/音频/系统设置，统一执行扫描、批量操作与配置。</p>
+  <div class="app">
+    <header class="app-header">
+      <div class="app-header__brand">
+        <div class="app-logo">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+          </svg>
+        </div>
+        <span class="app-logo__name">MediaPlus</span>
       </div>
-      <BaseTag variant="info">Alpha</BaseTag>
+      <span class="app-badge">Alpha</span>
     </header>
 
-    <div class="nav-table-wrapper">
-      <table class="nav-table">
-        <tbody>
-          <tr>
-            <td
-              v-for="tab in tabs"
-              :key="tab.key"
-              :class="['nav-table__cell', { 'is-active': tab.key === activeTab }]"
-            >
-              <button class="nav-cell" type="button" @click="() => switchTab(tab.key)">
-                <div class="nav-cell__row">
-                  <span class="nav-cell__label">{{ tab.label }}</span>
-                  <span class="nav-cell__count">{{ counts[tab.metric] ?? 0 }}</span>
-                </div>
-                <p class="nav-cell__desc">{{ tab.description }}</p>
-              </button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
+    <nav class="tab-nav">
+      <button
+        v-for="tab in tabs"
+        :key="tab.key"
+        class="tab-btn"
+        :class="{ 'is-active': tab.key === activeTab, 'tab-btn--launch': tab.launch }"
+        :style="tab.key === activeTab ? { '--tab-color': tab.color, '--tab-bg': tab.bgColor } : {}"
+        @click="tab.launch ? launchEditor() : switchTab(tab.key)"
+        :title="tab.description"
+      >
+        <span class="tab-btn__icon" v-html="tab.icon"></span>
+        <span class="tab-btn__label">{{ tab.label }}</span>
+        <span v-if="tab.launch" class="tab-btn__ext-icon">
+          <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+        </span>
+        <span class="tab-btn__count" v-if="(counts[tab.metric] ?? 0) > 0 && !tab.launch" :style="{ background: tab.color }">
+          {{ counts[tab.metric] ?? 0 }}
+        </span>
+      </button>
+    </nav>
 
-    <main class="sidepanel-app__body">
+    <main class="app-body">
       <GlobalDownloadBar />
-      <component :is="activeComponent" />
+      <Suspense>
+        <component
+          :is="activeComponent"
+          v-bind="activeTab === 'editor' ? { initialFiles: editorFiles } : {}"
+          @open-editor="openInEditor"
+        />
+        <template #fallback>
+          <div class="panel-loading">
+            <div class="panel-loading__spinner"></div>
+            <span>加载中…</span>
+          </div>
+        </template>
+      </Suspense>
     </main>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, defineAsyncComponent } from 'vue';
-import { BaseTag } from './components/base';
 import { provideResourceCounts } from './composables/useResourceCounts';
 import GlobalDownloadBar from './components/GlobalDownloadBar.vue';
 
-// 异步按需加载各面板，减少初始包体。
-// 保留原组件名用于后续查找；首屏默认加载 video 面板。
-const AsyncVideoCapturePanel = defineAsyncComponent(() => import(/* webpackChunkName: "panel-video" */ './views/VideoCapturePanel.vue'));
-const AsyncImageGrabPanel = defineAsyncComponent(() => import(/* webpackChunkName: "panel-image" */ './views/ImageGrabPanel.vue'));
-const AsyncAudioGrabPanel = defineAsyncComponent(() => import(/* webpackChunkName: "panel-audio" */ './views/AudioGrabPanel.vue'));
-const AsyncSettingsPanel = defineAsyncComponent(() => import(/* webpackChunkName: "panel-settings" */ './views/SettingsPanel.vue'));
+const AsyncVideoCapturePanel    = defineAsyncComponent(() => import('./views/VideoCapturePanel.vue'));
+const AsyncImageGrabPanel       = defineAsyncComponent(() => import('./views/ImageGrabPanel.vue'));
+const AsyncAudioGrabPanel       = defineAsyncComponent(() => import('./views/AudioGrabPanel.vue'));
+const AsyncTextPanel            = defineAsyncComponent(() => import('./views/TextPanel.vue'));
+const AsyncDownloadManagerPanel = defineAsyncComponent(() => import('./views/DownloadManagerPanel.vue'));
+const AsyncSourcesDownloadPanel = defineAsyncComponent(() => import('./views/SourcesDownloadPanel.vue'));
+const AsyncSettingsPanel        = defineAsyncComponent(() => import('./views/SettingsPanel.vue'));
+const AsyncScreenRecordPanel    = defineAsyncComponent(() => import('./views/ScreenRecordPanel.vue'));
+const AsyncVideoEditorPanel     = defineAsyncComponent(() => import('./views/VideoEditorPanel.vue'));
 
-type TabKey = 'video' | 'image' | 'audio' | 'settings';
+type TabKey = 'video'|'image'|'audio'|'text'|'downloads'|'sources'|'settings'|'screenrec'|'editor';
 
-interface TabDefinition {
-  key: TabKey;
-  label: string;
-  description: string;
-  metric: TabKey;
-  component: any;
-}
-
-const tabs: TabDefinition[] = [
-  { key: 'video', label: '视频采集', description: '识别并控制页面视频，支持录制与抓帧', metric: 'video', component: AsyncVideoCapturePanel },
-  { key: 'image', label: '图像抓取', description: '扫描页面图片，支持预览、复制与批量下载', metric: 'image', component: AsyncImageGrabPanel },
-  { key: 'audio', label: '音频抓取', description: '提取音频资源，进行单个或批量下载', metric: 'audio', component: AsyncAudioGrabPanel },
-  { key: 'settings', label: '系统设置', description: '配置扫描策略、命名模板与存储路径', metric: 'settings', component: AsyncSettingsPanel }
+const tabs = [
+  { key:'video'     as TabKey, label:'视频',   description:'识别并控制页面视频，支持录制与抓帧',    metric:'video'     as TabKey, color:'#6366f1', bgColor:'rgba(99,102,241,0.08)',  component:AsyncVideoCapturePanel,
+    icon:`<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>` },
+  { key:'image'     as TabKey, label:'图像',   description:'扫描页面图片，支持预览与批量下载',      metric:'image'     as TabKey, color:'#8b5cf6', bgColor:'rgba(139,92,246,0.08)',  component:AsyncImageGrabPanel,
+    icon:`<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>` },
+  { key:'audio'     as TabKey, label:'音频',   description:'提取音频资源，进行单个或批量下载',      metric:'audio'     as TabKey, color:'#10b981', bgColor:'rgba(16,185,129,0.08)',  component:AsyncAudioGrabPanel,
+    icon:`<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>` },
+  { key:'text'      as TabKey, label:'文本',   description:'提取页面正文、元数据与结构化信息',      metric:'text'      as TabKey, color:'#f59e0b', bgColor:'rgba(245,158,11,0.08)',  component:AsyncTextPanel,
+    icon:`<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>` },
+  { key:'downloads' as TabKey, label:'下载',   description:'查看下载历史与任务状态',               metric:'downloads' as TabKey, color:'#06b6d4', bgColor:'rgba(6,182,212,0.08)',   component:AsyncDownloadManagerPanel,
+    icon:`<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>` },
+  { key:'sources'   as TabKey, label:'Sources',description:'下载页面资源文件并保持目录结构',        metric:'sources'   as TabKey, color:'#ec4899', bgColor:'rgba(236,72,153,0.08)',  component:AsyncSourcesDownloadPanel,
+    icon:`<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>` },
+  { key:'screenrec' as TabKey, label:'录屏',   description:'录制屏幕、窗口或标签页',               metric:'screenrec' as TabKey, color:'#ef4444', bgColor:'rgba(239,68,68,0.08)',   component:AsyncScreenRecordPanel,
+    icon:`<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>` },
+  { key:'editor'    as TabKey, label:'编辑',   description:'点击在新标签页打开全屏视频编辑器',   metric:'editor'    as TabKey, color:'#6366f1', bgColor:'rgba(99,102,241,0.08)',  component:AsyncVideoEditorPanel, launch: true,
+    icon:`<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>` },
+  { key:'settings'  as TabKey, label:'设置',   description:'配置扫描策略、命名模板与存储路径',     metric:'settings'  as TabKey, color:'#6b7280', bgColor:'rgba(107,114,128,0.08)', component:AsyncSettingsPanel,
+    icon:`<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>` },
 ];
 
-const activeTab = ref<TabKey>('video');
+const activeTab  = ref<TabKey>('video');
+const editorFiles = ref<{ name: string; blob: Blob; url: string }[]>([]);
 const { counts } = provideResourceCounts();
+const activeComponent = computed(() => tabs.find(t => t.key === activeTab.value)?.component || AsyncVideoCapturePanel);
 
-const activeComponent = computed(() => tabs.find((t) => t.key === activeTab.value)?.component || AsyncVideoCapturePanel);
+function switchTab(key: TabKey) { activeTab.value = key; }
 
-function switchTab(key: TabKey) {
-  activeTab.value = key;
+/** 在当前窗口的当前标签页左侧打开全屏编辑器（通过 chrome.tabs.create 在同窗口新标签打开） */
+function launchEditor(clips?: { name: string; url: string }[]) {
+  const editorUrl = chrome.runtime.getURL('src/editor/index.html');
+  // 用 chrome.tabs.create 在同窗口打开，用户在左侧就能看到编辑器
+  chrome.tabs.create({ url: editorUrl }, (tab) => {
+    if (!clips?.length) return;
+    // 通过 chrome.storage.session 传递待编辑文件（无需等待消息）
+    chrome.storage.session?.set({ pendingEditorClips: clips });
+  });
+}
+
+function openInEditor(rec: { name: string; blob: Blob; url: string }) {
+  launchEditor([{ name: rec.name, url: rec.url }]);
+  // 同时更新侧边栏内的编辑器文件列表（备用）
+  editorFiles.value = [...editorFiles.value, rec];
 }
 </script>
 
 <style scoped>
-.sidepanel-app {
-  min-height: 100vh;
-  padding: var(--sp-spacing-5);
+.app {
+  height: 100vh;
   display: flex;
   flex-direction: column;
-  gap: var(--sp-spacing-5);
-}
-
-.sidepanel-app__header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: var(--sp-spacing-4);
-}
-
-.kicker {
-  margin: 0;
-  font-size: 12px;
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
-  color: var(--sp-color-muted);
-}
-
-h1 {
-  margin: 4px 0;
-  font-size: 22px;
-  color: var(--sp-color-heading);
-}
-
-.lede {
-  margin: 0;
-  color: var(--sp-color-muted);
-}
-
-.nav-table-wrapper {
-  border-radius: var(--sp-radius-lg);
+  background: var(--sp-color-bg);
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  background: rgba(15, 23, 38, 0.7);
 }
 
-.nav-table {
-  width: 100%;
-  border-collapse: collapse;
-}
-
-.nav-table__cell {
-  border-right: 1px solid rgba(255, 255, 255, 0.04);
-  padding: 0;
-}
-
-.nav-table__cell:last-child {
-  border-right: none;
-}
-
-.nav-table__cell.is-active {
-  background: rgba(79, 156, 255, 0.08);
-}
-
-.nav-cell {
-  width: 100%;
-  border: none;
-  background: transparent;
-  color: inherit;
-  padding: var(--sp-spacing-4);
-  text-align: left;
-  cursor: pointer;
+/* ── Header ── */
+.app-header {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.nav-cell:hover {
-  background: rgba(79, 156, 255, 0.05);
-}
-
-.nav-cell__row {
-  display: flex;
-  justify-content: space-between;
   align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: var(--sp-color-bg-elevated);
+  border-bottom: 1px solid var(--sp-color-border);
+  flex-shrink: 0;
+  box-shadow: var(--sp-shadow-sm);
 }
 
-.nav-cell__label {
-  font-size: 15px;
-  font-weight: 600;
+.app-header__brand { display: flex; align-items: center; gap: 8px; }
+
+.app-logo {
+  width: 28px; height: 28px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 2px 8px rgba(99,102,241,0.35);
+  flex-shrink: 0;
+}
+
+.app-logo__name {
+  font-size: 14px; font-weight: 700;
   color: var(--sp-color-heading);
+  letter-spacing: -0.02em;
 }
 
-.nav-cell__count {
-  font-size: 12px;
-  color: var(--sp-color-muted);
-  background: rgba(255, 255, 255, 0.06);
+.app-badge {
+  font-size: 11px; font-weight: 600;
+  letter-spacing: 0.06em; text-transform: uppercase;
+  color: #d97706;
+  background: rgba(245,158,11,0.12);
+  border: 1px solid rgba(245,158,11,0.28);
   padding: 2px 8px;
   border-radius: 999px;
 }
 
-.nav-cell__desc {
-  margin: 0;
-  font-size: 13px;
+/* ── Tab Nav ── */
+.tab-nav {
+  display: flex;
+  background: var(--sp-color-bg-elevated);
+  border-bottom: 1px solid var(--sp-color-border);
+  overflow-x: auto;
+  flex-shrink: 0;
+  scrollbar-width: none;
+  gap: 0;
+}
+.tab-nav::-webkit-scrollbar { display: none; }
+
+.tab-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 8px 6px;
+  border: none;
+  background: transparent;
   color: var(--sp-color-muted);
-}
-
-.sidepanel-app__body {
+  cursor: pointer;
   flex: 1;
+  min-width: 44px;
+  position: relative;
+  border-bottom: 2px solid transparent;
+  transition: all var(--sp-transition-fast);
+  white-space: nowrap;
 }
 
-@media (max-width: 640px) {
-  .nav-table__cell {
-    display: block;
-    border-right: none;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-  }
+.tab-btn:hover {
+  background: var(--sp-color-surface);
+  color: var(--sp-color-text);
 }
+
+.tab-btn.is-active {
+  color: var(--tab-color, var(--sp-color-primary));
+  border-bottom-color: var(--tab-color, var(--sp-color-primary));
+  background: var(--tab-bg, var(--sp-color-primary-light));
+}
+
+.tab-btn__icon { display: flex; align-items: center; justify-content: center; line-height: 0; }
+.tab-btn__label { font-size: 11px; font-weight: 600; letter-spacing: 0.01em; }
+
+.tab-btn__count {
+  position: absolute; top: 4px; right: 4px;
+  font-size: 11px; font-weight: 700;
+  color: white;
+  border-radius: 999px;
+  min-width: 14px; height: 14px;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0 3px; line-height: 1;
+}
+
+/* ── Body ── */
+.app-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+}
+
+/* ── Loading ── */
+.panel-loading {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 12px; padding: 48px 24px;
+  color: var(--sp-color-muted); font-size: 13px;
+}
+
+.panel-loading__spinner {
+  width: 24px; height: 24px;
+  border-radius: 50%;
+  border: 2px solid var(--sp-color-border-strong);
+  border-top-color: var(--sp-color-primary);
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
 </style>

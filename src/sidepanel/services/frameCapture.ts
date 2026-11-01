@@ -51,8 +51,17 @@ async function captureOneFrame(): Promise<CapturedFrame | null>{
       target: { tabId },
       func: () => {
         try {
-          const video = document.querySelector('video');
-          if (video && (video as HTMLVideoElement).readyState >= 2) {
+          // 优先查找正在播放的视频
+          let video = Array.from(document.querySelectorAll('video')).find(v => !v.paused && v.readyState >= 2);
+          // 如果没有播放的，查找第一个可见且就绪的视频
+          if (!video) {
+            video = Array.from(document.querySelectorAll('video')).find(v => {
+              const rect = v.getBoundingClientRect();
+              return v.readyState >= 2 && rect.width > 0 && rect.height > 0;
+            });
+          }
+          
+          if (video) {
             const v = video as HTMLVideoElement;
             const w = v.videoWidth, h = v.videoHeight;
             if(w && h){

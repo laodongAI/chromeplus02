@@ -1,5 +1,5 @@
 <template>
-  <BaseCard title="音频抓取" subtitle="识别音频资源并补充时长/大小元数据" padded>
+  <BaseCard title="音频抓取" subtitle="识别音频资源并补充时长/大小元数据" :padded="true">
     <div class="toolbar">
       <div class="toolbar__left">
         <BaseButton size="sm" variant="secondary" :loading="loading" @click="refreshAudioList">
@@ -8,115 +8,127 @@
         <BaseButton size="sm" variant="ghost" :loading="ensureBusy" :disabled="loading" @click="ensureConnectAndRefresh">
           重试连接
         </BaseButton>
-        <BaseButton size="sm" variant="ghost" @click="toggleSelectAll" :disabled="items.length === 0">
+        <BaseButton size="sm" variant="ghost" @click="handleSelectAll(!allSelected)" :disabled="items.length === 0">
           {{ allSelected ? '取消全选' : '全选' }}
         </BaseButton>
+        <select class="sp-select" v-model="filterDownloadStatus" @change="applyAudioFilter" :disabled="loading">
+          <option value="all">全部状态</option>
+          <option value="new">未下载</option>
+          <option value="downloaded">已下载</option>
+        </select>
       </div>
       <div class="toolbar__right">
         <BaseButton size="sm" :disabled="!hasSelection || bulkDownloading" :loading="bulkDownloading" @click="downloadSelected">
           下载所选 ({{ selectedCount }})
         </BaseButton>
+        <div class="recording-control">
+            <span v-if="audioRecording.recording" class="recording-timer">{{ recordingTimerDisplay }}</span>
             <BaseButton size="sm"
               :variant="audioRecording.recording ? 'danger' : 'secondary'"
               :disabled="loading || audioRecordingBusy"
               :loading="audioRecordingBusy"
               @click="toggleAudioRecording">
-              {{ audioRecording.recording ? '停止音频录制' : '提取当前播放视频音频' }}
+              {{ audioRecording.recording ? '停止录制' : '提取当前播放视频音频' }}
             </BaseButton>
+        </div>
       </div>
     </div>
 
     <!-- 下载队列展示 -->
-    <div class="download-queue" v-if="queueTasks.length">
-      <div class="download-queue__header">下载队列 ({{ queueTasks.length }})</div>
-      <ul class="download-queue__list">
-        <li v-for="t in queueTasks" :key="t.id" class="dq-item" :class="'dq-'+t.status">
-          <span class="dq-name" :title="t.fileName || t.url">{{ (t.fileName || t.url).slice(0,48) }}<span v-if="(t.fileName||t.url).length>48">…</span></span>
-          <span class="dq-status">{{ renderTaskStatus(t) }}</span>
-          <span class="dq-progress" v-if="t.status==='running'">
-            <span class="bar"><span class="bar__inner" :style="{ width: ((t.progress||0)*100)+'%' }"></span></span>
-          </span>
-          <span v-if="t.status==='error'" class="dq-error" :title="renderErrorHint(t)">{{ mapErrorCode(t.errorCode) }}</span>
-          <div class="dq-actions">
-            <BaseButton size="sm" variant="ghost" v-if="t.status==='error' || t.status==='canceled'" @click="retryTask(t.id)">重试</BaseButton>
-            <BaseButton size="sm" variant="ghost" v-if="t.status==='pending' || t.status==='running'" @click="cancelTask(t.id)">取消</BaseButton>
-          </div>
-        </li>
-      </ul>
-    </div>
+
 
     <div class="restricted-banner" v-if="restrictedHint">
-      {{ restrictedHint }}
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="banner-icon"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      <span class="banner-text">{{ restrictedHint }}<em class="banner-hint">请切换到普通网页后再试。</em></span>
+      <button class="banner-close" @click="restrictedHint = null" title="关闭提示">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
     </div>
 
-    <BaseTable :dense="true">
+    <SelectionTable
+      :items="displayAudioItems"
+      :selected="selected"
+      row-key="url"
+      :dense="true"
+      :loading="loading"
+      :row-class="getRowClass"
+      @select-all="handleSelectAll"
+      @select-row="handleRowSelect"
+    >
       <template #toolbar>
         <div class="table-status">
           <span>已识别 {{ items.length }} 条音频</span>
-          <span v-if="error" class="status status--error">{{ error }}</span>
+          <span v-if="error && !restrictedHint" class="status status--error">{{ error }}</span>
           <span v-else-if="loading" class="status">扫描中…</span>
           <span v-else-if="lastAction" class="status">{{ lastAction }}</span>
         </div>
+        <BaseSearchBar
+          v-model="audioSearchQuery"
+          :inputRef="audioSearchInputEl"
+          :disabled="loading"
+          placeholder="搜索音频 标题/URL (Ctrl+F)"
+          :hint="shortcutHint"
+          :show-hint="showShortcutHints"
+        />
       </template>
-      <thead>
-        <tr>
-          <th style="width: 40px;"></th>
-          <th>标题</th>
-          <th>链接</th>
-          <th style="width: 90px;">时长</th>
-          <th style="width: 110px;">大小</th>
-          <th style="width: 70px;">重复</th>
-          <th style="width: 160px;">操作</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-if="!loading && items.length === 0">
-          <td colspan="7" class="empty-row">未在当前页面检测到音频资源</td>
-        </tr>
-        <tr v-for="item in items" :key="item.url" :class="{ 'duplicate-row': duplicateSet.has(item.url), 'row-new': newAudioHighlight.has(item.url) }">
-          <td>
-            <input type="checkbox" :checked="isSelected(item.url)" @change="onSelectChange(item.url, $event)" />
-          </td>
-          <td>
-            <div class="title">{{ item.title || '未命名音频' }}</div>
-            <div class="subtitle">{{ extractHost(item.url) }}</div>
-          </td>
-          <td class="url-cell">
-            <a :href="item.url" target="_blank" rel="noreferrer">{{ item.url }}</a>
-          </td>
-          <td>{{ formatDuration(metaMap[item.url]?.duration) }}</td>
-          <td>{{ formatSize(metaMap[item.url]?.contentLength) }}</td>
-          <td>
-            <span v-if="duplicateSet.has(item.url)" class="dup-badge" title="URL+大小重复">重复</span>
-          </td>
-          <td>
-            <div class="row-actions">
-              <BaseButton size="sm" variant="secondary" @click="copyLink(item.url)">
-                复制链接
-              </BaseButton>
-              <BaseButton size="sm" :loading="downloadingUrls.has(item.url)" @click="downloadSingle(item)">
-                下载
-              </BaseButton>
-            </div>
-          </td>
-        </tr>
-      </tbody>
-    </BaseTable>
+      <template #header>
+        <th>标题</th>
+        <th>链接</th>
+        <th style="width: 90px;">时长</th>
+        <th style="width: 110px;">大小</th>
+        <th style="width: 80px;">状态</th>
+        <th style="width: 70px;">重复</th>
+        <th style="width: 160px;">操作</th>
+      </template>
+      <template #empty>未在当前页面检测到音频资源</template>
+      <template #row="{ item }">
+        <td>
+          <div class="title">{{ item.title || '未命名音频' }}</div>
+          <div class="subtitle">{{ extractHost(item.url) }}</div>
+        </td>
+        <td class="url-cell">
+          <a :href="item.url" target="_blank" rel="noreferrer">{{ item.url }}</a>
+        </td>
+        <td>{{ formatDuration(metaMap[item.url]?.duration) }}</td>
+        <td>{{ formatSize(metaMap[item.url]?.contentLength) }}</td>
+        <td>
+          <span v-if="isDownloaded(item.url)" class="chip chip--success">已下载</span>
+          <span v-else class="chip chip--ghost">未下载</span>
+        </td>
+        <td>
+          <span v-if="duplicateSet.has(item.url)" class="dup-badge" title="URL+大小重复">重复</span>
+        </td>
+        <td>
+          <div class="row-actions">
+            <BaseButton size="sm" variant="secondary" @click="copyLink(item.url)">
+              复制链接
+            </BaseButton>
+            <BaseButton size="sm" :loading="downloadingUrls.has(item.url)" @click="downloadSingle(item)">
+              下载
+            </BaseButton>
+          </div>
+        </td>
+      </template>
+    </SelectionTable>
   </BaseCard>
 </template>
 
 <script lang="ts">
 import { computed, defineComponent, onMounted, onBeforeUnmount, reactive, ref } from 'vue';
-import { BaseButton, BaseCard, BaseTable } from '../components/base';
+import { BaseButton, BaseCard, BaseTable, SelectionTable, ErrorBadge, BaseSearchBar } from '../components/base';
+import { GLOBAL_SHORTCUT_HINT } from '../utils/shortcutHints';
+import { useListSearch } from '../composables/useListSearch';
+import { useRowHighlight } from '../composables/useRowHighlight';
 import { useResourceCounts } from '../composables/useResourceCounts';
 import { MessageType, type AudioItemDTO } from '@/messaging';
 import { addDownload, subscribe, retryDownload, cancelDownload, type DownloadTask } from '../services/downloadQueue';
+import { loadHistory, isDownloaded } from '../services/downloadHistory';
 import { loadState, saveState } from '../services/persist';
+import { loadSettings } from '../services/settings';
 import { markProcessed, isProcessed, mediaKey } from '../composables/useMediaRegistry';
 import {
   getActiveTabInfo,
   sendMessageToTab,
-  sendRuntimeMessage,
   isReceivingEndMissingError,
   ensureContentConnected,
   getAllFramesInfo,
@@ -137,13 +149,20 @@ interface AudioMeta {
   contentType?: string;
 }
 
+
 export default defineComponent({
   name: 'AudioGrabPanel',
-  components: { BaseButton, BaseCard, BaseTable },
+  components: { BaseButton, BaseCard, SelectionTable, BaseSearchBar },
   setup() {
     const { setCount } = useResourceCounts();
     const items = ref<AudioItemDTO[]>([]);
-    const newAudioHighlight = reactive(new Set<string>()); // 新增高亮集合
+    const { newSet: newAudioHighlight, removedSet: removedAudioHighlight, markNew: markAudioNew, markRemoved: markAudioRemoved } = useRowHighlight({ ttlNew: 2500, ttlRemoved: 900 });
+    const ephemeralRemovedAudio = reactive<Record<string, AudioItemDTO>>({});
+    const displayAudioItems = computed(() => {
+      const base = items.value.slice();
+      Object.keys(ephemeralRemovedAudio).forEach(k => { if (!base.find(i => i.url === k)) base.push(ephemeralRemovedAudio[k]); });
+      return applyFilterAndSort(base);
+    });
     const metaMap = reactive<Record<string, AudioMeta>>({});
     const loading = ref(false);
     const bulkDownloading = ref(false);
@@ -153,16 +172,26 @@ export default defineComponent({
     const downloadingUrls = reactive<Set<string>>(new Set());
     const minDuration = ref<number>(0);
     const minSize = ref<number>(0);
+    const filterDownloadStatus = ref<'all'|'downloaded'|'new'>('all');
     const sortKey = ref<string>(''); // duration|size|title|url
     const sortDir = ref<'asc'|'desc'>('asc');
+    const searchKit = useListSearch<string>({
+      onRefresh: () => refreshAudioList(),
+      selectAll: () => { selected.clear(); items.value.forEach(i=> selected.add(i.url)); scheduleSave(); },
+      clearSelection: () => { selected.clear(); scheduleSave(); },
+      invertSelection: () => { const all = items.value.map(i=> i.url); const next = new Set<string>(); all.forEach(u=>{ if(!selected.has(u)) next.add(u); }); selected.clear(); next.forEach(u=> selected.add(u)); scheduleSave(); },
+      selectNew: () => { newAudioHighlight.forEach(u=> { if(typeof u === 'string') selected.add(u); }); scheduleSave(); }
+    });
     const frameMode = ref<'auto'|'top'|'frame'>('auto');
     const frames = ref<FrameInfo[]>([]);
     const frameModeValue = ref<string>('auto');
     const ensureBusy = ref(false);
     const restrictedHint = ref<string | null>(null);
     const queueTasks = ref<DownloadTask[]>([]);
-    const audioRecording = reactive<{ recording: boolean; startedAt?: number; fileName?: string; error?: string }>({ recording: false });
+    const audioRecording = reactive<{ recording: boolean; startedAt?: number; fileName?: string; error?: string; frameId?: number; videoIndex?: number }>({ recording: false });
     const audioRecordingBusy = ref(false);
+    const shortcutHint = GLOBAL_SHORTCUT_HINT;
+    const showShortcutHints = ref(true);
     let removeRuntimeListener: (()=>void)|null = null;
     let unsubscribeQueue: (()=>void) | null = null;
 
@@ -177,6 +206,7 @@ export default defineComponent({
       saveTimer = window.setTimeout(()=>{ saveState({ selections: { audio: Array.from(selected) } }); }, 500);
     }
 
+    let boundFrameId: number | null = null; // 当前音频列表绑定的来源 frameId（增量更新按 frame 过滤）
     async function refreshAudioList() {
       loading.value = true;
       error.value = null;
@@ -184,8 +214,8 @@ export default defineComponent({
       try {
         const tabId = await ensureActiveTab();
         // 启用音频相关功能（轻量，无需等待）
-        try { void sendMessageToTab<any>(tabId, { type: MessageType.ENABLE_FEATURES, payload: { audio: true, spaWatchers: true } }); } catch {}
-        try { frames.value = await getAllFramesInfo(tabId); } catch {}
+        try { void sendMessageToTab<any>(tabId, { type: MessageType.ENABLE_FEATURES, payload: { audio: true, spaWatchers: true } }); } catch { /* noop */ }
+        try { frames.value = await getAllFramesInfo(tabId); } catch { /* noop */ }
         let response: AudioListResponse | undefined;
         if(frameMode.value==='top'){
           response = await sendMessageToTab<AudioListResponse>(tabId, { type: MessageType.REQUEST_AUDIO_LIST });
@@ -201,11 +231,15 @@ export default defineComponent({
               try{
                 const r = await sendMessageToTab<AudioListResponse>(tabId, { type: MessageType.REQUEST_AUDIO_LIST }, { frameId: fid });
                 if(r?.success && Array.isArray(r.items) && r.items.length){ response = r; frameMode.value='frame'; frameModeValue.value='f:'+fid; break; }
-              }catch{}
+              }catch { /* noop */ }
             }
           }
         }
         if (!response?.success) throw new Error(response?.error || '扫描失败');
+        // 绑定本次列表来源 frame：优先用响应自带的 frameId，其次按模式推导
+        boundFrameId = typeof (response as any)?.frameId === 'number'
+          ? (response as any).frameId
+          : (frameMode.value === 'frame' ? (parseSelectedFrameId() ?? 0) : 0);
         items.value = response.items || [];
         selected.clear();
         setCount('audio', items.value.length);
@@ -227,9 +261,9 @@ export default defineComponent({
                 return;
               }
             }
-          } catch {}
+          } catch { /* noop */ }
         }
-        error.value = toFriendlyError(err);
+        if (!restrictedHint.value) { error.value = toFriendlyError(err); }
         items.value = [];
         selected.clear();
         setCount('audio', 0);
@@ -250,17 +284,15 @@ export default defineComponent({
       finally{ ensureBusy.value=false; }
     }
 
-    function isSelected(url: string) { return selected.has(url); }
-
-    function onSelectChange(url: string, event: Event) {
-      const checked = (event.target as HTMLInputElement).checked;
-      if (checked) selected.add(url); else selected.delete(url);
+    function handleSelectAll(checked: boolean) {
+      if (checked) { selected.clear(); items.value.forEach((item) => selected.add(item.url)); }
+      else { selected.clear(); }
       scheduleSave();
     }
 
-    function toggleSelectAll() {
-      if (allSelected.value) { selected.clear(); }
-      else { selected.clear(); items.value.forEach((item) => selected.add(item.url)); }
+    function handleRowSelect(url: string) {
+      if (selected.has(url)) selected.delete(url);
+      else selected.add(url);
       scheduleSave();
     }
 
@@ -317,8 +349,8 @@ export default defineComponent({
     }
 
     function triggerDownload(item: AudioItemDTO) {
-      const filename = buildFilename(item);
-      addDownload(item.url, filename, 'audio', MessageType.START_DOWNLOAD);
+      // 传 undefined 让后台命名模板处理
+      addDownload(item.url, undefined, 'audio', MessageType.START_DOWNLOAD);
     }
 
     function formatDuration(d?: number) {
@@ -386,37 +418,91 @@ export default defineComponent({
     }
 
     onMounted(async () => {
+      // 加载下载历史
+      await loadHistory();
       try {
         const st = await loadState();
         if(Array.isArray(st.selections?.audio)){ selected.clear(); st.selections!.audio!.forEach(u=> selected.add(u)); }
         if(st.filters?.audio){ if(typeof st.filters.audio.minDuration==='number') minDuration.value = st.filters.audio.minDuration; if(typeof st.filters.audio.minSize==='number') minSize.value = st.filters.audio.minSize; }
-      } catch {}
+      } catch { /* noop */ }
       refreshAudioList();
-      void updateRestrictedHint();
+      await updateRestrictedHint();
+      if (restrictedHint.value) { return; }
       unsubscribeQueue = subscribe(tasks => { queueTasks.value = tasks; });
+
+      // 监听标签页切换：自动重新检测受限状态并刷新
+      const onTabActivated = async () => {
+        await updateRestrictedHint();
+        if (!restrictedHint.value) {
+          error.value = null;
+          await refreshAudioList();
+        }
+      };
+      if (chrome?.tabs?.onActivated?.addListener) {
+        chrome.tabs.onActivated.addListener(onTabActivated);
+      }
+      // 注册全局快捷键
+      searchKit.register();
+      // 加载设置（快捷键提示开关）
+      try { const s = await loadSettings(); showShortcutHints.value = s.showShortcutHints; } catch { /* noop */ }
       // 监听录制状态（音频模式）
       if(chrome?.runtime?.onMessage?.addListener){
         const handler: Parameters<typeof chrome.runtime.onMessage.addListener>[0] = (message) => {
           if(!message || !message.type) return;
           if(message.type === MessageType.VIDEO_RECORDING_STATUS && message.mode === 'audio') {
-            if(message.status === 'started'){ audioRecording.recording = true; audioRecording.startedAt = message.startedAt || Date.now(); audioRecording.fileName = undefined; audioRecording.error = undefined; lastAction.value = '音频录制中…'; }
-            else if(message.status === 'completed'){ audioRecording.recording = false; audioRecording.fileName = message.fileName; lastAction.value = '音频录制完成'; }
-            else if(message.status === 'error'){ audioRecording.recording = false; audioRecording.error = message.error || '音频录制失败'; error.value = audioRecording.error || '音频录制失败'; }
+            if(message.status === 'started'){ 
+              audioRecording.recording = true; 
+              audioRecording.startedAt = message.startedAt || Date.now(); 
+              audioRecording.fileName = undefined; 
+              audioRecording.error = undefined; 
+              lastAction.value = '音频录制中…'; 
+            }
+            else if(message.status === 'completed'){ 
+              audioRecording.recording = false;
+              audioRecording.fileName = message.fileName;
+              lastAction.value = '音频录制完成';
+              // 录制产物由内容脚本自行触发下载（见 content-scripts/router.ts recorder.onstop），此处无需重复处理
+            }
+            else if(message.status === 'error'){ 
+              audioRecording.recording = false; 
+              audioRecording.error = message.error || '音频录制失败'; 
+              error.value = audioRecording.error || '音频录制失败'; 
+            }
             audioRecordingBusy.value = false;
           }
           // 增量资源更新（音频）
           if(message.type === MessageType.RESOURCE_UPDATE){
             try {
               const payload: any = (message as any).payload || {};
-              if(Array.isArray(payload.audio)){
-                const prev = new Set(items.value.map(i=> i.url));
+              // frameId 守卫：忽略来自其他 frame 的自动增量，防止跨 frame 列表互相覆盖
+              const updFrameId = typeof payload.frameId === 'number' ? payload.frameId : 0;
+              if(updFrameId === (boundFrameId ?? 0) && Array.isArray(payload.audio)){
+                const diff = payload.diff?.audio;
+                if (diff?.removed?.length) {
+                  diff.removed.forEach((u: string) => {
+                    const ex = items.value.find(i => i.url === u);
+                    if (ex) { ephemeralRemovedAudio[u] = { ...ex }; }
+                  });
+                  markAudioRemoved(diff.removed);
+                  window.setTimeout(() => { diff.removed.forEach((u: string) => { delete ephemeralRemovedAudio[u]; }); }, 900);
+                }
                 const incoming: AudioItemDTO[] = payload.audio;
-                incoming.forEach(a=> { if(!prev.has(a.url)) { newAudioHighlight.add(a.url); window.setTimeout(()=> newAudioHighlight.delete(a.url), 2500); } });
+                if (diff?.added?.length) {
+                  const addedUrls = diff.added.map((a: AudioItemDTO) => a.url);
+                  if (addedUrls.length) markAudioNew(addedUrls);
+                } else {
+                  const prev = new Set(items.value.map(i=> i.url));
+                  const added = incoming.filter(a => !prev.has(a.url)).map(a => a.url);
+                  if (added.length) markAudioNew(added);
+                }
                 items.value = incoming;
                 setCount('audio', items.value.length);
                 lastAction.value = '自动增量更新';
               }
             } catch { /* noop */ }
+          }
+          if(message.type === MessageType.SETTINGS_UPDATE){
+            try { const payload: any = (message as any).payload || {}; if(typeof payload.showShortcutHints === 'boolean') showShortcutHints.value = payload.showShortcutHints; } catch { /* noop */ }
           }
         };
         chrome.runtime.onMessage.addListener(handler);
@@ -426,6 +512,7 @@ export default defineComponent({
 
     onBeforeUnmount(()=>{ if(unsubscribeQueue){ unsubscribeQueue(); unsubscribeQueue=null; } });
     onBeforeUnmount(()=>{ if(removeRuntimeListener){ removeRuntimeListener(); removeRuntimeListener=null; } });
+    onBeforeUnmount(()=>{ searchKit.unregister(); });
 
     function onFrameModeChange(){
       const v = frameModeValue.value;
@@ -437,7 +524,7 @@ export default defineComponent({
     function parseSelectedFrameId(): number | null { const v = frameModeValue.value; if(v.startsWith('f:')){ const id = Number(v.slice(2)); return Number.isFinite(id)? id : null; } return null; }
     function formatFrameLabel(f: FrameInfo){
       const id = f.frameId; let host='';
-      try{ if(f.url){ const u=new URL(f.url); host = u.hostname.replace(/^www\./,'') + (u.pathname && u.pathname!=='/' ? ' · ' + (u.pathname.length>20 ? (u.pathname.slice(0,20)+'…') : u.pathname) : ''); } }catch{}
+      try{ if(f.url){ const u=new URL(f.url); host = u.hostname.replace(/^www\./,'') + (u.pathname && u.pathname!=='/' ? ' · ' + (u.pathname.length>20 ? (u.pathname.slice(0,20)+'…') : u.pathname) : ''); } }catch { /* noop */ }
       return host? `#${id} ${host}` : `#${id}`;
     }
 
@@ -446,6 +533,20 @@ export default defineComponent({
         const meta = metaMap[it.url] || {};
         if(minDuration.value && (!meta.duration || meta.duration < minDuration.value)) return false;
         if(minSize.value && (!meta.contentLength || meta.contentLength < minSize.value)) return false;
+        
+        // 下载状态过滤
+        if (filterDownloadStatus.value !== 'all') {
+          const downloaded = isDownloaded(it.url);
+          if (filterDownloadStatus.value === 'downloaded' && !downloaded) return false;
+          if (filterDownloadStatus.value === 'new' && downloaded) return false;
+        }
+
+        const q = searchKit.searchQuery.value.trim().toLowerCase();
+        if(q){
+          const titleHit = (it.title||'').toLowerCase().includes(q);
+          const urlHit = it.url.toLowerCase().includes(q);
+            if(!titleHit && !urlHit) return false;
+        }
         return true;
       });
       if(!sortKey.value) return filtered;
@@ -494,6 +595,10 @@ export default defineComponent({
       return tabId;
     }
 
+    function focusAudioSearch(){ searchKit.focusSearch(); }
+    function invertAudioSelection(){ const all = items.value.map(i=> i.url); const next = new Set<string>(); all.forEach(u=>{ if(!selected.has(u)) next.add(u); }); selected.clear(); next.forEach(u=> selected.add(u)); scheduleSave(); }
+    function selectNewAudio(){ newAudioHighlight.forEach(u=> { if(typeof u === 'string') selected.add(u); }); scheduleSave(); }
+
     // 重复集合：同一归一化URL + contentLength >0 且出现次数>1
     const duplicateSet = computed(() => {
       const groups: Record<string, number> = {};
@@ -515,45 +620,8 @@ export default defineComponent({
       return dup;
     });
 
-    function renderTaskStatus(t: DownloadTask){
-      switch(t.status){
-        case 'pending': return t.retries && t.retries>0 ? `排队(重试${t.retries})` : '排队';
-        case 'running': { const pct = typeof t.progress === 'number' ? Math.round(t.progress*100) : undefined; const base = pct!=null ? `下载中 ${pct}%` : '下载中'; return t.retries && t.retries>0 ? `${base}·重试${t.retries}` : base; }
-        case 'completed': return '完成';
-        case 'error': return '失败';
-        case 'canceled': return '已取消';
-        default: return t.status;
-      }
-    }
     function retryTask(id: string){ retryDownload(id); }
     function cancelTask(id: string){ cancelDownload(id); }
-
-    function mapErrorCode(code?: string){
-      switch(code){
-        case 'DRM': return 'DRM受限';
-        case 'CORS': return '跨域';
-        case 'PERMISSION': return '权限';
-        case 'NO_RESOURCE': return '缺失';
-        case 'NETWORK': return '网络';
-        case 'INTERRUPTED': return '中断';
-        case 'UNKNOWN': return '未知';
-        default: return '错误';
-      }
-    }
-    function renderErrorHint(t: DownloadTask){
-      if (!t.errorCode) return t.error || '未知错误';
-      const base = mapErrorCode(t.errorCode);
-      const tail = t.error ? `: ${t.error}` : '';
-      switch(t.errorCode){
-        case 'DRM': return base + ' — 音频资源受 DRM 保护，可尝试录制方式'+tail;
-        case 'CORS': return base + ' — 跨域限制，需同源获取或使用录制'+tail;
-        case 'PERMISSION': return base + ' — 权限/403，可能需要登录或授权'+tail;
-        case 'NO_RESOURCE': return base + ' — 资源不存在或失效'+tail;
-        case 'NETWORK': return base + ' — 网络失败，可重试'+tail;
-        case 'INTERRUPTED': return base + ' — 下载被中断，可重试'+tail;
-        default: return base + tail;
-      }
-    }
 
     async function toggleAudioRecording(){
       if(audioRecordingBusy.value) return;
@@ -561,32 +629,134 @@ export default defineComponent({
       try {
         const tabId = await ensureActiveTab();
         // 确保视频特性已启用
-        try { await sendMessageToTab<any>(tabId, { type: MessageType.ENABLE_FEATURES, payload: { video:true, playbackEvents:true } }); } catch {}
+        try { await sendMessageToTab<any>(tabId, { type: MessageType.ENABLE_FEATURES, payload: { video:true, playbackEvents:true } }); } catch { /* noop */ }
+        
         if(audioRecording.recording){
-          const resp = await sendMessageToTab<any>(tabId, { type: MessageType.STOP_RECORD_VIDEO, index:0 });
-          if(!resp?.success) throw new Error(resp?.error || '停止音频录制失败');
+          // 停止录制：使用保存的 frameId 和 index
+          const targetFrameId = audioRecording.frameId;
+          const targetIndex = audioRecording.videoIndex ?? 0;
+          
+          let stopped = false;
+          try {
+             const resp = await sendMessageToTab<any>(tabId, { type: MessageType.STOP_RECORD_VIDEO, index: targetIndex }, targetFrameId != null ? { frameId: targetFrameId } : undefined);
+             if(resp?.success) stopped = true;
+          } catch { /* noop */ }
+          
+          if(!stopped) {
+             // 如果定向停止失败，尝试广播（作为后备）
+             const ids = await getAllFrameIds(tabId);
+             for(const fid of ids){
+               try {
+                 const resp = await sendMessageToTab<any>(tabId, { type: MessageType.STOP_RECORD_VIDEO, index: targetIndex }, { frameId: fid });
+                 if(resp?.success) { stopped = true; break; }
+               } catch { /* noop */ }
+             }
+          }
+          
+          if(!stopped) throw new Error('停止音频录制失败 (未找到录制实例)');
+          // 停止后，监听器会收到 completed 消息
         } else {
-          const resp = await sendMessageToTab<any>(tabId, { type: MessageType.START_RECORD_VIDEO, index:0, mode:'audio' });
+          // 启动录制：寻找最佳视频源
+          let targetFrameId: number | undefined = undefined;
+          let targetIndex = 0;
+          
+          // 辅助函数：在指定帧查找播放中的视频
+          const findVideoInFrame = async (fid?: number) => {
+            try {
+              const resp = await sendMessageToTab<any>(tabId, { type: MessageType.GET_VIDEO_LIST }, fid!=null ? { frameId: fid } : undefined);
+              if(resp?.success && Array.isArray(resp.videos) && resp.videos.length > 0) {
+                // 优先找正在播放的
+                const playing = resp.videos.find((v:any) => v.paused === false);
+                if(playing) return { found: true, index: playing.index, frameId: fid };
+                // 其次找可见的
+                const visible = resp.videos.find((v:any) => v.visible);
+                if(visible) return { found: true, index: visible.index, frameId: fid };
+                // 最后返回第一个
+                return { found: true, index: resp.videos[0].index, frameId: fid };
+              }
+            } catch { /* noop */ }
+            return null;
+          };
+
+          // 1. 如果用户选定了帧，只在该帧找
+          if(frameMode.value === 'frame') {
+            const fid = parseSelectedFrameId();
+            if(fid != null) {
+               const res = await findVideoInFrame(fid);
+               if(res) { targetFrameId = res.frameId; targetIndex = res.index; }
+            }
+          } 
+          // 2. 否则（自动或顶层），先找顶层
+          if(targetFrameId === undefined) {
+             const res = await findVideoInFrame(0);
+             if(res) { targetFrameId = res.frameId; targetIndex = res.index; }
+          }
+          // 3. 如果顶层没找到，且是自动模式，遍历所有帧
+          if(targetFrameId === undefined && frameMode.value !== 'top') {
+             const ids = await getAllFrameIds(tabId);
+             for(const fid of ids) {
+               if(fid === 0) continue; // 已找过
+               const res = await findVideoInFrame(fid);
+               if(res) { targetFrameId = res.frameId; targetIndex = res.index; break; }
+             }
+          }
+
+          if (targetFrameId === undefined) {
+             throw new Error('未检测到可录制的视频源，无法提取音频');
+          }
+
+          const resp = await sendMessageToTab<any>(tabId, { type: MessageType.START_RECORD_VIDEO, index: targetIndex, mode:'audio' }, targetFrameId!=null ? { frameId: targetFrameId } : undefined);
           if(!resp?.success) throw new Error(resp?.error || '启动音频录制失败');
+          
+          // 保存录制上下文
+          audioRecording.frameId = targetFrameId;
+          audioRecording.videoIndex = targetIndex;
         }
       } catch(e:any){ error.value = e?.message || '音频录制操作失败'; audioRecordingBusy.value=false; }
     }
 
+    // 需要一个定时器来更新计时显示
+    const now = ref(Date.now());
+    let timer: number | null = null;
+    onMounted(() => {
+      timer = window.setInterval(() => { now.value = Date.now(); }, 1000);
+    });
+    onBeforeUnmount(() => { if(timer) clearInterval(timer); });
+    
+    // 计时显示（录制中每秒更新）
+    const recordingTimerDisplay = computed(() => {
+       if (!audioRecording.recording || !audioRecording.startedAt) return '';
+       const seconds = Math.max(0, Math.floor((now.value - audioRecording.startedAt) / 1000));
+       const m = Math.floor(seconds / 60);
+       const s = seconds % 60;
+       return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    });
+
+    function getRowClass(item: AudioItemDTO) {
+      return {
+        'duplicate-row': duplicateSet.value.has(item.url),
+        'row-new': newAudioHighlight.has(item.url),
+        'row-removed': removedAudioHighlight.has(item.url)
+      };
+    }
+
     return {
       items: filteredItems,
+      displayAudioItems,
       newAudioHighlight,
+      removedAudioHighlight,
       loading,
       error,
       lastAction,
       selectedCount,
+      selected,
       hasSelection,
       allSelected,
       bulkDownloading,
       downloadingUrls,
       refreshAudioList,
-      toggleSelectAll,
-      isSelected,
-      onSelectChange,
+      handleSelectAll,
+      handleRowSelect,
       copyLink,
       downloadSingle,
       downloadSelected,
@@ -609,15 +779,23 @@ export default defineComponent({
       ,ensureBusy
       ,ensureConnectAndRefresh
       ,queueTasks
-      ,renderTaskStatus
       ,retryTask
       ,cancelTask
       ,restrictedHint
       ,audioRecording
       ,audioRecordingBusy
       ,toggleAudioRecording
-      ,mapErrorCode
-      ,renderErrorHint
+      ,audioSearchQuery: searchKit.searchQuery
+      ,audioSearchInputEl: searchKit.searchInputRef
+      ,shortcutHint
+      ,focusAudioSearch
+      ,invertAudioSelection
+      ,selectNewAudio
+      ,showShortcutHints
+      ,getRowClass
+      ,isDownloaded
+      ,filterDownloadStatus
+      ,recordingTimerDisplay
     };
   }
 });
@@ -629,20 +807,6 @@ function toFriendlyError(err: unknown) {
   if (err instanceof Error) return err.message;
   if (typeof err === 'string') return err;
   return '无法获取音频列表';
-}
-
-function buildFilename(item: AudioItemDTO): string {
-  const title = item.title?.replace(/[\\/:*?"<>|]/g, '_') || 'audio_capture';
-  const ext = inferExtension(item.url);
-  const stamp = new Date().toISOString().replace(/[:T]/g, '-').split('.')[0];
-  return `${title}_${stamp}.${ext}`;
-}
-
-function inferExtension(url?: string): string {
-  if (!url) return 'mp3';
-  const match = url.match(/\.([a-z0-9]{2,4})(?:\?|$)/i);
-  if (match) return match[1].toLowerCase();
-  return 'mp3';
 }
 
 function normalizeForDup(url: string): string {
@@ -659,80 +823,156 @@ function normalizeForDup(url: string): string {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: var(--sp-spacing-4);
+  margin-bottom: 12px;
   flex-wrap: wrap;
-  gap: var(--sp-spacing-3);
+  gap: 6px;
 }
 
-.toolbar__left,
-.toolbar__right {
+.toolbar__left, .toolbar__right {
   display: flex;
-  gap: var(--sp-spacing-3);
+  gap: 6px;
   align-items: center;
+  flex-wrap: wrap;
 }
 
 .table-status {
   display: flex;
-  justify-content: space-between;
-  gap: var(--sp-spacing-3);
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
   color: var(--sp-color-muted);
 }
 
-/* 下载队列样式（简版） */
-.download-queue { border:1px solid var(--sp-color-border); border-radius:6px; padding:8px 10px; margin-bottom: var(--sp-spacing-4); background: var(--sp-color-bg-subtle); }
-.download-queue__header { font-size:12px; font-weight:600; margin-bottom:6px; color: var(--sp-color-heading); }
-.download-queue__list { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:4px; max-height:180px; overflow:auto; }
-.dq-item { display:flex; align-items:center; gap:8px; font-size:12px; }
-.dq-name { flex:1; word-break:break-all; }
-.dq-status { width:52px; text-align:center; }
-.dq-progress { flex:0 0 100px; }
-.dq-error { color: var(--sp-color-danger); font-size:11px; }
-.dq-actions { display:flex; gap:4px; }
-.bar { position:relative; display:block; width:100%; height:6px; background:#ddd; border-radius:3px; overflow:hidden; }
-.bar__inner { position:absolute; top:0; left:0; bottom:0; background: var(--sp-color-primary); width:0; transition: width .3s; }
-.restricted-banner { margin-bottom: var(--sp-spacing-4); padding:10px 12px; border-radius:6px; background: rgba(248,186,34,0.15); color:#8a5300; font-size:13px; }
+.status { font-size: 11px; color: var(--sp-color-muted); }
+.status--error { color: var(--sp-color-danger); }
 
-.status {
-  color: var(--sp-color-muted);
+.restricted-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border-radius: var(--sp-radius-md);
+  background: var(--sp-color-warning-light);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  color: var(--sp-color-warning);
+  font-size: 11px;
+  line-height: 1.4;
 }
-
-.status--error {
-  color: var(--sp-color-danger);
+.restricted-banner span { flex: 1; }
+.banner-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--sp-color-warning);
+  opacity: 0.6;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  margin-top: 1px;
+  transition: opacity var(--sp-transition-fast);
+}
+.banner-close:hover { opacity: 1; }
+.banner-icon { flex-shrink: 0; margin-top: 1px; }
+.banner-hint {
+  display: block;
+  font-style: normal;
+  font-size: 11px;
+  opacity: 0.7;
+  margin-top: 2px;
 }
 
 .empty-row {
   text-align: center;
   color: var(--sp-color-muted);
-  padding: var(--sp-spacing-4);
+  padding: 24px;
+  font-size: 12px;
 }
-.duplicate-row { background: rgba(255,196,102,0.15); }
+
+.duplicate-row { background: rgba(245, 158, 11, 0.06); }
 .row-new { animation: rowNewFade 2.4s ease-in forwards; }
-@keyframes rowNewFade { 0% { background: rgba(79,156,255,0.55); } 60% { background: rgba(79,156,255,0.25); } 100% { background: transparent; } }
-.dup-badge { display:inline-block; padding:2px 4px; background:#ffc465; color:#7a4b00; border-radius:4px; font-size:10px; line-height:1; }
+.row-removed { animation: rowRemovedFade 0.9s ease-out forwards; }
+
+@keyframes rowNewFade {
+  0% { background: rgba(59, 138, 255, 0.3); }
+  100% { background: transparent; }
+}
+@keyframes rowRemovedFade {
+  0% { background: rgba(239, 68, 68, 0.3); }
+  100% { background: transparent; opacity: 0; }
+}
+
+.dup-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 4px;
+  padding: 1px 5px;
+  background: var(--sp-color-warning-light);
+  color: var(--sp-color-warning);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid rgba(245, 158, 11, 0.25);
+}
 
 .title {
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 500;
   color: var(--sp-color-heading);
 }
 
 .subtitle {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--sp-color-muted);
+  margin-top: 1px;
 }
 
 .url-cell a {
   color: var(--sp-color-primary);
+  font-size: 11px;
   word-break: break-all;
 }
 
 .row-actions {
   display: flex;
-  gap: var(--sp-spacing-2);
+  gap: 4px;
   flex-wrap: wrap;
 }
 
 input[type='checkbox'] {
-  width: 16px;
-  height: 16px;
+  width: 13px;
+  height: 13px;
+  accent-color: var(--sp-color-primary);
 }
+
+.recording-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.recording-timer {
+  font-family: var(--sp-font-mono, monospace);
+  font-size: 12px;
+  color: var(--sp-color-danger);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  animation: blink 1s infinite;
+}
+
+.sp-select {
+  height: 28px;
+  padding: 0 8px;
+  background: var(--sp-color-surface);
+  border: 1px solid var(--sp-color-border-strong);
+  border-radius: var(--sp-radius-sm);
+  color: var(--sp-color-text);
+  font-size: 11px;
+  font-family: var(--sp-font-family);
+  outline: none;
+  cursor: pointer;
+}
+
+@keyframes blink { 50% { opacity: 0.5; } }
 </style>

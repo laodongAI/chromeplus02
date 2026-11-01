@@ -20,7 +20,7 @@ export function scanImages(): ImageScanItem[] {
       if (seen.has(key)) return;
       seen.add(key);
       results.push({ url: abs, width: w || 0, height: h || 0, kind });
-    } catch {}
+    } catch { /* noop */ }
   };
 
   // <img>：支持 src、currentSrc、srcset、以及常见 lazy 属性

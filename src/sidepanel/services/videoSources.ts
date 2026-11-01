@@ -8,6 +8,7 @@ interface VideoSourceItem {
   extension?: string;
   size?: number;
   via?: string;
+  kind?: 'video' | 'audio' | 'hls' | 'dash';
 }
 
 // 优先级扩展名顺序
@@ -21,7 +22,9 @@ export async function fetchVideoSources(index: number, frameId?: number): Promis
   try {
     const resp = await sendMessageToTab<VideoSourcesResponse & { meta?: any }>(tabId, { type: MessageType.REQUEST_VIDEO_SOURCES, index }, { frameId });
     const networkResp: any = await sendRuntimeMessage({ type: 'GET_CAPTURED_VIDEO_SOURCES', tabId });
-    const networkSources: VideoSourceItem[] = Array.isArray(networkResp?.sources) ? networkResp.sources.map((s:any)=>({ url:s.url, mimeType:s.mimeType, extension:s.extension, size:s.size, via: s.via||'network'})) : [];
+    const networkSources: VideoSourceItem[] = Array.isArray(networkResp?.sources) ? networkResp.sources.map((s:any)=>({ url:s.url, mimeType:s.mimeType, extension:s.extension, size:s.size, via: s.via||'network', kind: s.kind })) : [];
+    // Reverse network sources to prioritize the most recently captured ones (fixes issue where scrolling on feeds downloads old video)
+    networkSources.reverse();
     const domSources: VideoSourceItem[] = Array.isArray(resp?.sources) ? resp.sources.map(s=>({ ...s, via: s.via || 'dom'})) : [];
     const merged = dedupeVideoSources([...networkSources, ...domSources]);
     return { sources: merged, meta: resp?.meta || {} };

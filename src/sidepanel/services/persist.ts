@@ -42,7 +42,7 @@ export async function saveState(data: PersistPayload) {
       filters: { ...(existing.filters||{}), ...(data.filters||{}) }
     };
     await new Promise<void>(resolve => { chrome.storage.local.set({ [key]: merged }, ()=> resolve()); });
-  } catch {}
+  } catch { /* noop */ }
 }
 
-function safeOrigin(u: string){ try { const url = new URL(u); return url.origin.replace(/[^a-zA-Z0-9:\/._-]/g,''); } catch { return 'unknown'; } }
+function safeOrigin(u: string){ try { const url = new URL(u); return url.origin.replace(/[^a-zA-Z0-9:/._-]/g,''); } catch { return 'unknown'; } }
