@@ -1,55 +1,94 @@
-# 架构设计（MV3）
+# 系统架构设计 (System Architecture)
 
-## 1. 模块与职责
-- `manifest.json`：声明 MV3 权限、背景脚本（Service Worker）、侧边栏入口与内容脚本注入范围。
-- `background.js`（Service Worker）：
-  - 生命周期与全局事件监听，处理跨页面逻辑与下载监听（可扩展）。
-  - 统一消息路由（可拓展为消息分发中心）。
-- `content_script.js`（内容脚本）：
-  - 在目标站点 DOM 中扫描媒体资源（视频/音频/图片），执行页面上下文操作（播放/暂停/抓帧等）。
-  - 响应侧边栏消息，返回识别结果。
-- `sidepanel.html / sidepanel.js`（侧边栏 UI）：
-  - 提供资源扫描、列表化展示、单个/批量操作；统一的通知与进度展示。
-  - 通过 `chrome.tabs.sendMessage` 与内容脚本交互，必要时用 `chrome.scripting.executeScript` 注入函数。
-  - 针对视频列表，负责发起“开始/停止录制”“下载原视频”“提取音频”等操作请求，并实时显示状态。
-- `utils.js`：通用工具、配置读写（`chrome.storage.local`）、站点匹配等。
+## 1. 架构概览
+本项目基于 **Chrome Manifest V3** 标准，采用 **Vue 3** 构建侧边栏 UI，通过 **Message Passing** 机制与后台服务和内容脚本进行通信。
 
-## 2. 关键数据
-- 媒体条目：
-  - 视频：`{index, src/currentSrc, width, height, duration, muted}`
-  - 音频：`{url, title}`
-  - 图片：`{url, width?, height?, type?}`
-- 设置项（持久化至 `chrome.storage.local`）：
-  - 自动扫描开关、命名模板、下载并发上限、默认录制封装/质量等。
+```mermaid
+graph TD
+    subgraph UI [Sidepanel (Vue 3)]
+        Nav[Tab Navigation]
+        VideoPanel[VideoCapturePanel]
+        ImagePanel[ImageGrabPanel]
+        AudioPanel[AudioGrabPanel]
+        DownloadPanel[DownloadManagerPanel]
+        SettingsPanel[SettingsPanel]
+    end
 
-## 3. 通信与流程
-- 侧边栏 → 内容脚本：扫描请求、播放/暂停、录制/抓帧、复制/下载执行。
-- 内容脚本 → 侧边栏：识别结果、操作反馈。
-- 侧边栏 → 内容脚本新增控制：
-  - `START_RECORD_VIDEO` / `STOP_RECORD_VIDEO`：对指定 `videoIndex` 使用 `captureStream()` + `MediaRecorder` 录制整段并回传 Blob。
-  - `DOWNLOAD_VIDEO_SOURCE`：请求内容脚本返回可用的视频源 URL 列表；可回退到背景脚本请求。
-  - `START_AUDIO_RECORD` / `STOP_AUDIO_RECORD`：仅录制音轨并回传音频 Blob。
-- 内容脚本 → 侧边栏：
-  - 返回录制状态（开始/结束/失败原因）、可用视频源直链、音频提取结果。
-- 侧边栏 → 后台：
-  - 触发 `chrome.downloads.download`（可在侧边栏直接调用，也可委托后台统一处理，并监听下载进度）。
+    subgraph Background [Service Worker]
+        MsgRouter[Message Router]
+        Downloader[Download Manager]
+        Storage[Chrome Storage]
+    end
 
-## 4. 使用的 Chrome API
-- `tabs`/`scripting`：脚本注入与页面上下文执行。
-- `sidePanel`：侧边栏 UI 宿主。
-- `downloads`：文件下载与进度事件。
-- `storage`：设置项与配置持久化。
+    subgraph Content [Content Scripts]
+        Router[Event Router]
+        Sniffer[Media Sniffer]
+        Recorder[Media Recorder]
+        Capture[Frame Capture]
+    end
 
-## 5. 约束与回退
-- DRM/EME：`captureStream()` 可能不可用 → 降级为 `captureVisibleTab` 或直链下载。
-- CORS/跨域画布：`canvas` 导出受限 → 尽量使用下载直链或标签页截图。
-- 音频/视频录制需用户手势触发，录制中断时需回传原因并在 UI 中提示。
+    Nav --> VideoPanel
+    Nav --> ImagePanel
+    Nav --> AudioPanel
+    Nav --> DownloadPanel
+    Nav --> SettingsPanel
 
-## 6. 未来演进方向（概要）
-- 分层更清晰：
-  - 背景层：事件监听、消息路由、（可选）AI 代理与下载监听。
-  - 内容层：站点识别、页面信息与媒体提取、视频控制。
-  - UI 层：侧边栏 Vue 组件化（播放控制、媒体列表、设置等）。
-  - 工具与服务层：配置、站点注册表、命名模板、权限审计等。
-- 消息协议类型化：在 TypeScript 迁移阶段，引入统一的 `MessageType` 枚举与请求/响应结构，避免魔法字符串。
-- 站点适配器：为 B 站 / YouTube / 抖音 / 知乎 等站点抽象“站点适配器”，封装选择器与解析逻辑，降低 DOM 变动带来的影响。
+    VideoPanel <-->|Msg: GET_VIDEO_LIST / START_RECORD| Content
+    ImagePanel <-->|Msg: REQUEST_IMAGE_LIST| Content
+    AudioPanel <-->|Msg: REQUEST_AUDIO_LIST| Content
+    
+    UI <-->|Msg: DOWNLOAD_ACTION| Background
+    Content -->|DOM Events| WebPage[Web Page]
+```
+
+## 2. 模块详细设计
+
+### 2.1 视频采集模块 (Video Module)
+*   **视图组件**: `src/sidepanel/views/VideoCapturePanel.vue`
+*   **核心服务**: `src/sidepanel/services/videoSources.ts`
+*   **通信协议**:
+    *   发送 `GET_VIDEO_LIST` 获取视频数据。
+    *   发送 `START_RECORD_VIDEO` / `STOP_RECORD_VIDEO` 控制录制。
+    *   接收 `VIDEO_RECORDING_STATUS` 更新 UI 状态。
+*   **数据流**: Content Script 扫描 DOM -> 返回 `VideoItemDTO[]` -> Vue 渲染列表 -> 用户操作 -> 发送指令 -> Content Script 执行。
+
+### 2.2 图像抓取模块 (Image Module)
+*   **视图组件**: `src/sidepanel/views/ImageGrabPanel.vue`
+*   **核心服务**: `src/sidepanel/services/frameCapture.ts`
+*   **功能逻辑**:
+    *   **静态扫描**: 发送 `REQUEST_IMAGE_LIST` 获取页面图片。
+    *   **动态抓帧**: 前端定时器 (`setInterval`) -> 调用 `captureVisibleTab` 或发送指令截取 `<video>` 画面 -> 生成 Base64/Blob -> 添加到列表。
+    *   **懒加载**: 使用 `IntersectionObserver` 监听列表滚动，按需加载图片预览。
+
+### 2.3 音频抓取模块 (Audio Module)
+*   **视图组件**: `src/sidepanel/views/AudioGrabPanel.vue`
+*   **核心服务**: 无独立服务文件，逻辑内聚于组件。
+*   **功能逻辑**:
+    *   **扫描**: 发送 `REQUEST_AUDIO_LIST`。
+    *   **内录**: 利用 `chrome.tabCapture` (如果可用) 或 Content Script 中的 `MediaRecorder` 录制音频流。
+
+### 2.4 下载管理模块 (Download Module)
+*   **视图组件**: `src/sidepanel/views/DownloadManagerPanel.vue`
+*   **核心服务**: 
+    *   `src/sidepanel/services/downloadQueue.ts`: 内存中的下载队列管理。
+    *   `src/sidepanel/services/downloadHistory.ts`: 基于 `chrome.storage` 的持久化历史记录。
+    *   `src/background/downloads.ts`: 实际调用 `chrome.downloads` API 的后台逻辑。
+
+### 2.5 设置模块 (Settings Module)
+*   **视图组件**: `src/sidepanel/views/SettingsPanel.vue`
+*   **核心服务**: `src/sidepanel/services/settings.ts`
+*   **持久化**: 自动同步 `ExtensionSettings` 对象到 `chrome.storage.sync`。
+
+## 3. 关键技术点
+
+### 3.1 跨 Frame 通信
+由于现代网页常使用 `iframe` 嵌套视频，系统实现了 `frameId` 识别机制。
+*   **Sidepanel**: 获取所有 Frame 列表 (`getAllFramesInfo`)。
+*   **Messaging**: 发送消息时指定 `{ frameId: targetId }`，确保指令准确送达目标 iframe 中的 Content Script。
+
+### 3.2 智能录制状态同步
+为了实现“视频暂停即暂停录制” (FR-04)，Content Script 维护了 `ActiveRecording` 状态机，并监听 DOM 元素的 `play`, `pause`, `ended` 事件，实时同步 `MediaRecorder` 的状态。
+
+### 3.3 资源去重与高亮
+*   **去重**: 使用 URL 或感知哈希 (pHash) 生成唯一 Key (`useMediaRegistry.ts`)。
+*   **高亮**: 使用 `useRowHighlight` Composable，对比新旧列表，为新增资源添加短暂的高亮动画。

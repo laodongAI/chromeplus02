@@ -1,0 +1,27 @@
+# 依赖目录：不出现在版本库（package-lock.json 仍被追踪以锁定版本）
+node_modules/
+
+# 构建产物：由 npm run build 重新生成，扩展加载用本地 dist 即可
+dist/
+
+# 日志与临时文件
+*.log
+npm-debug.log*
+
+# 编辑器与系统文件
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 环境与密钥（API Key 等严禁入库）
+.env
+.env.*
+*.pem
+*.crx
+
+# 测试与构建缓存
+coverage/
+.vite/
+playwright-report/
+test-results/

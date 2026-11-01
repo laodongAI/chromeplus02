@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Test Sources API</title>
+</head>
+<body>
+  <h1>Test Chrome Debugger API</h1>
+  <button id="testBtn">Test Get Resource Tree</button>
+  <pre id="output"></pre>
+  
+  <script>
+    document.getElementById('testBtn').addEventListener('click', async () => {
+      const output = document.getElementById('output');
+      
+      try {
+        // 获取当前标签页
+        const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+        const tabId = tabs[0].id;
+        
+        output.textContent = 'Attaching debugger...\n';
+        
+        // 附加debugger
+        await chrome.debugger.attach({ tabId }, '1.3');
+        
+        output.textContent += 'Enabling Page domain...\n';
+        await chrome.debugger.sendCommand({ tabId }, 'Page.enable');
+        
+        output.textContent += 'Getting resource tree...\n';
+        const result = await chrome.debugger.sendCommand({ tabId }, 'Page.getResourceTree');
+        
+        output.textContent += 'Detaching debugger...\n';
+        await chrome.debugger.detach({ tabId });
+        
+        output.textContent += '\n\nResult:\n' + JSON.stringify(result, null, 2);
+        
+        // 分析frame结构
+        output.textContent += '\n\n=== Frame Analysis ===\n';
+        if (result.frameTree) {
+          analyzeFrame(result.frameTree, 0);
+        }
+        
+        function analyzeFrame(frame, level) {
+          const indent = '  '.repeat(level);
+          output.textContent += `${indent}Frame: ${frame.frame?.name || frame.frame?.id || 'unnamed'}\n`;
+          output.textContent += `${indent}  URL: ${frame.frame?.url}\n`;
+          output.textContent += `${indent}  Resources: ${frame.resources?.length || 0}\n`;
+          
+          if (frame.resources) {
+            frame.resources.slice(0, 5).forEach(r => {
+              output.textContent += `${indent}    - ${r.url}\n`;
+            });
+            if (frame.resources.length > 5) {
+              output.textContent += `${indent}    ... and ${frame.resources.length - 5} more\n`;
+            }
+          }
+          
+          if (frame.childFrames) {
+            output.textContent += `${indent}  Child frames: ${frame.childFrames.length}\n`;
+            frame.childFrames.forEach(child => analyzeFrame(child, level + 1));
+          }
+        }
+        
+      } catch (e) {
+        output.textContent += '\n\nError: ' + e.message;
+        try {
+          await chrome.debugger.detach({ tabId });
+        } catch {}
+      }
+    });
+  </script>
+</body>
+</html>

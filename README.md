@@ -1,260 +1,191 @@
 # ChromePlus 网页内容分析扩展（MV3）
 
-一个基于 Manifest V3 的 Chrome 扩展，面向多站点（哔哩哔哩、抖音、YouTube、知乎等）提供页面媒体识别（视频/音频/图片）、视频快捷控制、录制与抓帧能力。当前核心聚焦“媒体识别 + 控制 + 抓取与下载”，AI 分析与 MCP 功能作为可选扩展，不作为默认能力。
+一个基于 Manifest V3 的 Chrome 扩展，面向多站点（哔哩哔哩、抖音、YouTube、知乎等）提供页面媒体识别（视频/音频/图片）、视频快捷控制、录制与抓帧能力。当前核心聚焦"媒体识别 + 控制 + 抓取与下载"，AI 分析与 MCP 功能作为可选扩展，不作为默认能力。
 
 > 开源友好：本项目遵循中文文档与中文注释标准；欢迎 Issue/PR 共同完善。
 
-## 功能特性
-- 多站点识别：自动识别当前页面所属站点并适配采集字段
-- 侧边栏（Side Panel）：集中展示采集信息与分析入口（Vue3 构建）
-- 视频控制：播放/暂停、录制（按站点差异做兼容）
-- AI 分析：支持自定义模型（Moonshot/OpenAI 等），可配置提示模板
-- 本地存储：与本地 MCP 文件系统服务集成，保存分析结果
-- 可扩展架构：消息协议统一、服务封装清晰、测试覆盖逐步完善
+## ✨ 功能特性
 
-## 目录结构（当前实现为主，TS/Vue 迁移在进行中）
+### 核心功能
+- 🎬 **视频采集**：识别并控制页面视频，支持录制与抓帧
+- 🖼️ **图像抓取**：扫描页面图片，支持预览、复制与批量下载
+- 🎵 **音频抓取**：提取音频资源，进行单个或批量下载
+- 📝 **文本抽取**：提取页面正文、元数据与结构化信息
+- 📦 **Sources下载**：浏览和下载页面资源文件，保持目录结构
+- 📥 **下载管理**：统一下载队列，支持并发控制、进度显示、错误重试
+
+### 平台支持
+- 哔哩哔哩（bilibili.com）
+- 抖音（douyin.com）
+- YouTube（youtube.com）
+- 知乎（zhihu.com）
+- 微博（weibo.com）
+- 小红书（xiaohongshu.com）
+- NPR（npr.org）
+- 以及更多通用网站
+
+### 技术特性
+- ⚡ **高性能**：并发下载、智能缓存、内存优化
+- 🛡️ **可靠性**：错误重试、状态恢复、资源清理
+- 🎨 **现代UI**：Vue3 + TypeScript，响应式设计
+- 🔧 **可扩展**：模块化架构，消息协议统一
+
+## 📁 目录结构
 
 ```
 chromeplus02/
-├── manifest.json                # MV3 清单（指向当前 JS 实现）
-├── background.js                # 后台 Service Worker：标签页管理、消息路由等
-├── content_script.js            # 内容脚本：站点检测、页面信息与媒体扫描
-├── sidepanel.html               # 侧边栏页面
-├── sidepanel.js                 # 侧边栏逻辑：控制、录制、抓帧、列表展示
-├── utils.js                     # 通用工具与配置读写
-├── styles.css                   # 侧边栏样式
-├── icons/                       # 扩展图标资源
-├── src/                         # TypeScript + Vue3 迁移中源码（暂未接入 manifest）
-├── build/                       # 构建脚本与配置
-├── tests/                       # 单元测试（Vitest）
-├── docs/                        # 文档：需求、架构、数据流、UI、API、测试等
-├── vite.config.ts               # Vite 配置
-├── package.json                 # 脚本与依赖
-└── README.md                    # 本说明文档
+├── manifest.json                # MV3 清单
+├── src/                         # TypeScript + Vue3 源码
+│   ├── background/              # 后台服务
+│   │   ├── index.ts            # 入口
+│   │   ├── downloads.ts        # 下载管理
+│   │   ├── recording.ts        # 录制管理
+│   │   ├── capture.ts          # 网络捕获
+│   │   └── sourcesDownload.ts  # Sources下载
+│   ├── content-scripts/        # 内容脚本
+│   │   ├── router.ts           # 消息路由
+│   │   ├── audio.ts            # 音频扫描
+│   │   ├── images.ts           # 图片扫描
+│   │   ├── sources.ts          # 资源扫描
+│   │   └── sourcesTree.ts      # 资源树获取
+│   ├── sidepanel/              # 侧边栏
+│   │   ├── views/              # 视图组件
+│   │   ├── components/         # 基础组件
+│   │   ├── composables/        # 组合式函数
+│   │   └── services/           # 服务层
+│   ├── messaging/              # 消息协议
+│   ├── services/               # 全局服务
+│   └── utils/                  # 工具函数
+├── docs/                       # 文档
+│   ├── implementation-summary.md
+│   ├── project-optimization.md
+│   ├── product-analysis.md
+│   ├── ui-improvements.md
+│   └── sources-download-guide.md
+├── dist/                       # 构建产物
+├── tests/                      # 测试
+└── build/                      # 构建脚本
 ```
 
-## 文档总览（开发前必读）
-- 需求与流程：`docs/requirements.md`
-- 架构设计：`docs/architecture.md`
-- 当前状态梳理：`docs/current-state.md`
-- 数据与流程：`docs/data-flow.md`
-- UI/交互设计：`docs/ui-design.md`
-- API 使用：`docs/api-usage.md`
-- 安全与权限：`docs/security.md`
-- 任务跟踪（需求-设计-代码映射）：`docs/tracking.md`
-- 测试策略与用例：`docs/testing.md`
-- 更新日志：`docs/CHANGELOG.md`
+## 🚀 快速开始
 
-## 核心功能
-
-### 1. 视频控制功能
-- 播放/暂停视频
-- 视频录制
-- 录制文件保存
-
-### 2. AI内容分析
-- 多平台内容识别
-- AI模型分析
-- 结果本地保存
-
-### 3. 多平台支持
-- 哔哩哔哩
-- 抖音
-- YouTube
-- 知乎
-- 微博
-- 小红书
-
-## 代码模块
-
-### background.js（旧）/ src/background（新）
-1. **标签页管理**
-   - getCurrentTabUrl(): 获取当前标签页URL
-   - getActiveBilibiliTabId(): 获取活动B站标签页ID
-   - handleContentSiteInfo(): 处理网站信息
-
-2. **AI请求代理**
-   - handleProxyAiRequest(): 处理AI API请求代理
-   - initialize(): 初始化扩展
-   - loadConfig(): 加载配置
-   - saveConfig(): 保存配置
-
-3. **MCP服务管理**
-   - checkMcpService(): 检查MCP服务状态
-   - startMcpService(): 启动MCP服务
-   - updateMcpStatus(): 更新MCP状态
-
-### content_script.js（旧）/ src/content-scripts（新）
-1. **页面交互**
-   - setupUrlChangeListener(): 设置URL变化监听
-   - onUrlChange(): URL变化处理
-   - updatePageInfo(): 更新页面信息
-
-2. **视频控制**
-   - playVideo(): 播放视频
-   - pauseVideo(): 暂停视频
-   - startRecording(): 开始录制
-   - stopRecording(): 停止录制
-
-3. **内容分析**
-   - analyzeContent(): 分析页面内容
-   - getBasicPageInfo(): 获取基本页面信息
-
-### utils（TS 版）
-1. **配置管理**
-   - loadConfig(): 加载配置
-   - saveConfig(): 保存配置
-   - getActiveAiModel(): 获取当前活跃的AI模型
-
-2. **站点识别**
-   - isSupportedSite(): 检查URL是否为支持的网站
-   - getSiteInfo(): 获取网站信息
-   - getPromptTemplate(): 获取分析提示模板
-
-3. **文件处理**
-   - formatPrompt(): 格式化提示模板
-   - formatFilename(): 格式化文件名
-   - checkMcpStatus(): 检查MCP服务状态
-
-### MCP 服务
-1. **文件系统服务**
-   - readFile(): 读取文件
-   - writeFile(): 写入文件
-   - createDirectory(): 创建目录
-   - fileExists(): 检查文件存在
-   - listDirectory(): 获取目录列表
-
-2. **MCP客户端**
-   - checkAvailability(): 检查服务可用性
-   - saveToFile(): 保存内容到文件
-
-## 配置说明
-
-### 1. 基础配置 (config.js)
-```javascript
-{
-  interface: {
-    theme: 'auto',     // 主题：'light', 'dark', 'auto'
-    language: 'zh-CN'  // 语言：'zh-CN', 'en-US'
-  },
-  recording: {
-    format: 'webm',    // 录制格式：'webm', 'mp4'
-    quality: 'high',   // 质量：'low', 'medium', 'high'
-    autoSave: true     // 是否自动保存
-  }
-}
-```
-
-### 2. 站点配置
-```javascript
-{
-  supportedSites: [
-    {
-      id: 'bilibili',
-      name: '哔哩哔哩',
-      enabled: true,
-      domains: ['bilibili.com', 'b23.tv'],
-      patterns: ['*://*.bilibili.com/video/*', '*://b23.tv/*']
-    },
-    // 其他站点配置...
-  ]
-}
-```
-
-### 3. AI模型配置
-```javascript
-{
-  aiModels: [
-    {
-      id: 'moonshot',
-      name: 'MoonShot',
-      enabled: true,
-      apiUrl: 'https://api.moonshot.cn/v1/chat/completions',
-      model: 'moonshot-v1-8k',
-      temperature: 0.7,
-      maxTokens: 2000,
-      apiKey: ''  // 用户需要填写自己的API密钥
-    }
-  ],
-  analysis: {
-    defaultModel: 'moonshot',
-    promptTemplates: {
-      // 不同网站的分析提示模板
-    }
-  }
-}
-```
-
-### 4. 文件存储配置
-```javascript
-{
-  fileStorage: {
-    mcpEnabled: true,  // 是否启用MCP服务
-    mcpApiUrl: 'http://localhost:51512',  // MCP服务API地址
-    mcpServicePath: '',  // MCP服务可执行文件路径
-    mcpStatus: false,  // MCP服务运行状态
-    savedPath: 'D:/mcp/mcp_result_files',  // 保存路径
-    filenameTemplate: '{title}_{date}_{time}'  // 文件名模板
-  }
-}
-```
-
-## 权限说明
-
-### 基础权限
-- `activeTab`: 访问当前标签页
-- `scripting`: 注入脚本
-- `tabs`: 访问标签系统
-- `sidePanel`: 创建侧面板
-- `storage`: 存储数据
-
-### 主机权限
-```json
-"host_permissions": [
-  "*://*.bilibili.com/*",
-  "*://*.douyin.com/*",
-  "*://*.youtube.com/*",
-  "*://*.zhihu.com/*",
-  "*://*.weibo.com/*",
-  "*://*.xiaohongshu.com/*",
-  "https://api.moonshot.cn/*",
-  "https://api.openai.com/*",
-  "http://localhost:51512/*"
-]
-```
-
-## 快速开始（开发）
-
-```powershell
+### 安装依赖
+```bash
 npm install
+```
+
+### 开发模式
+```bash
 npm run dev
 ```
 
-将构建产物目录作为“加载已解压的扩展”（待引入 manifest 生成脚本后，推荐加载 dist 目录）。迁移期内仍可用根目录旧版文件进行功能验证。
-
-## 构建与测试
-
-```powershell
-npm run typecheck
-npm run lint
-npm run test
+### 构建生产版本
+```bash
 npm run build
 ```
 
-## 迁移路线与删除旧代码的条件
-- 确认 TS 版背景/内容脚本/侧边栏在目标站点上功能对等（手测清单 + 单测通过）。
-- manifest 切换至 dist 产物并通过 Chrome 加载验证。
-- 权限与 CSP 校验通过且未新增不必要权限。
-- 完成后移除：`background.js`、`content_script.js`、`sidepanel.html`、`sidepanel.js`、`utils.js` 等旧文件，并在 CHANGELOG 标记。
+### 加载扩展
+1. 打开 Chrome 浏览器
+2. 访问 `chrome://extensions/`
+3. 开启"开发者模式"
+4. 点击"加载已解压的扩展程序"
+5. 选择 `dist` 目录
 
-## 贡献指南
-- 采用中文提交信息与 PR 描述；Issue 请附重现步骤或截图。
-- 代码需包含中文模块/函数 JSDoc 注释；若变更结构需更新 docs/ 与 README。
-- 提交前请运行 `npm run lint && npm run test` 确保通过。
+## 📖 使用指南
 
-## 安全与隐私
-- 遵循最小权限原则；仅在确有需要时修改 manifest 权限。
-- 未经用户同意不上传任何个人信息；与第三方 API 的交互需在界面提示并由用户主动触发。
+### 视频采集
+1. 打开包含视频的页面
+2. 点击扩展图标打开侧边栏
+3. 切换到"视频采集"标签
+4. 点击"重新扫描"识别视频
+5. 使用播放/暂停/录制等功能
 
-## 许可证
+### 图像抓取
+1. 打开包含图片的页面
+2. 切换到"图像抓取"标签
+3. 点击"扫描图片"
+4. 选择要下载的图片
+5. 点击"下载选中"
+
+### Sources下载
+1. 打开要下载资源的页面
+2. 切换到"Sources下载"标签
+3. 点击"扫描资源目录"
+4. 浏览目录树，选择文件或目录
+5. 点击"下载并打包"
+6. 等待zip文件下载完成
+
+**注意**：使用Sources下载时，页面会显示"正在调试此浏览器"提示，这是正常现象。
+
+## 🔧 开发指南
+
+### 代码规范
+```bash
+npm run lint        # 代码检查
+npm run typecheck   # 类型检查
+npm run test        # 运行测试
+```
+
+### 技术栈
+- **框架**：Vue 3 (Composition API)
+- **语言**：TypeScript
+- **构建**：Vite
+- **测试**：Vitest + Playwright
+- **代码规范**：ESLint + Prettier
+
+### 架构设计
+- **消息驱动**：统一的消息协议（MessageType）
+- **模块化**：清晰的职责分离
+- **类型安全**：完整的TypeScript类型定义
+- **可测试**：单元测试和集成测试
+
+## 📚 文档
+
+详细文档请查看 `docs/` 目录：
+- [功能实现总结](docs/implementation-summary.md)
+- [项目优化报告](docs/project-optimization.md)
+- [产品功能分析](docs/product-analysis.md)
+- [UI改进说明](docs/ui-improvements.md)
+- [Sources下载指南](docs/sources-download-guide.md)
+- [架构设计](docs/architecture.md)
+- [需求文档](docs/requirements.md)
+
+## 🔐 权限说明
+
+### 基础权限
+- `tabs` - 访问标签系统
+- `activeTab` - 访问当前标签页
+- `scripting` - 注入脚本
+- `storage` - 存储数据
+- `sidePanel` - 创建侧面板
+- `downloads` - 下载文件
+- `webRequest` - 监听网络请求
+- `webNavigation` - 导航事件
+- `debugger` - 访问DevTools数据（用于Sources下载）
+
+### 主机权限
+支持所有网站（`<all_urls>`）以及特定平台的API访问。
+
+## 🤝 贡献指南
+
+- 采用中文提交信息与 PR 描述
+- Issue 请附重现步骤或截图
+- 代码需包含中文注释
+- 提交前运行 `npm run lint && npm run test`
+
+## 📝 更新日志
+
+版本更新历史参见 Git 提交记录（`git log --oneline`）。
+
+## 📄 许可证
+
 本项目遵循仓库内 `LICENSE` 文件所述的开源许可证。
+
+## 🌟 致谢
+
+感谢所有贡献者和用户的支持！
+
+---
+
+**当前版本**: 1.0.0  
+**最后更新**: 2026-11-01
