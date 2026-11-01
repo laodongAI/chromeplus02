@@ -73,7 +73,6 @@ import { provideResourceCounts } from './composables/useResourceCounts';
 import GlobalDownloadBar from './components/GlobalDownloadBar.vue';
 import BaseToast from './components/base/BaseToast.vue';
 import BaseConfirm from './components/base/BaseConfirm.vue';
-import AsyncSiteCatalogPanel from './views/SiteCatalogPanel.vue';
 
 const AsyncSiteCatalogPanel     = defineAsyncComponent(() => import('./views/SiteCatalogPanel.vue'));
 const AsyncVideoCapturePanel    = defineAsyncComponent(() => import('./views/VideoCapturePanel.vue'));
