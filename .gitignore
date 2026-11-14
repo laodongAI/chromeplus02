@@ -1,8 +1,19 @@
 # 依赖目录：不出现在版本库（package-lock.json 仍被追踪以锁定版本）
 node_modules/
 
+# 包管理器准绳 = npm（CI 用 npm ci）：pnpm-lock 不入库，避免双锁版本漂移
+# （pnpm 本地安装会自行生成该文件，仅作本机解析缓存，不参与版本管理）
+pnpm-lock.yaml
+
 # 构建产物：由 npm run build 重新生成，扩展加载用本地 dist 即可
 dist/
+
+# UI 预览产物与截图：由 tools/preview-server.cjs 现场生成，不入库
+dist-preview/
+preview-shots/
+
+# 外部工具的 HTML 分享包（非本项目产物）
+.trae-html-share-packages/
 
 # 日志与临时文件
 *.log
