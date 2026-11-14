@@ -1,5 +1,6 @@
 <template>
-  <BaseCard title="支持网站" subtitle="选择站点打开，回到「视频 / 图像 / 音频」一键扫描抓取" :padded="true">
+  <!-- UI 三批（组6）：标题引用术语表 PANEL_TITLES.sites；正文「图像」统一为「图片」 -->
+  <BaseCard :title="PANEL_TITLES.sites" subtitle="选择站点打开，回到「视频 / 图片 / 音频」一键扫描抓取" :padded="true">
     <div class="site-toolbar">
       <BaseSearchBar v-model="query" placeholder="搜索站点名称、域名或描述…" :hint="''" />
       <select v-model="category" class="site-cat-select" aria-label="站点分类">
@@ -8,18 +9,20 @@
     </div>
 
     <div class="site-grid">
-      <div v-for="s in filteredSites" :key="s.id" class="site-card" :class="{ 'is-hot': hotIds.has(s.id) }" @click="openSite(s.url)">
-        <div class="site-card__head">
+      <!-- UI 三批（组3）：整卡可点击的 div 换成 button，卡片本身即整块可聚焦（Enter/Space 打开站点） -->
+      <button type="button" v-for="s in filteredSites" :key="s.id" class="site-card" :class="{ 'is-hot': hotIds.has(s.id) }" @click="openSite(s.url)">
+        <span class="site-card__head">
           <span class="site-card__name">{{ s.name }}</span>
-          <span class="site-card__cat" :style="{ background: catColor(s.category).bg, color: catColor(s.category).fg }">{{ s.category }}</span>
-        </div>
-        <div class="site-card__desc">{{ s.desc }}</div>
-        <div class="site-card__domains">{{ s.domains.join(' · ') }}</div>
-        <div class="site-card__open">
+          <!-- UI 三批（组2）：分类色不再 JS 硬编码，改为引用 --sp-cat-{stem}-{bg|fg} token，深色主题随 data-theme 自动切换 -->
+          <span class="site-card__cat" :style="{ background: 'var(--sp-cat-' + catStem(s.category) + '-bg)', color: 'var(--sp-cat-' + catStem(s.category) + '-fg)' }">{{ s.category }}</span>
+        </span>
+        <span class="site-card__desc">{{ s.desc }}</span>
+        <span class="site-card__domains">{{ s.domains.join(' · ') }}</span>
+        <span class="site-card__open">
           打开并抓取
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-        </div>
-      </div>
+        </span>
+      </button>
       <div v-if="!filteredSites.length" class="site-empty">没有匹配的站点</div>
     </div>
 
@@ -29,8 +32,11 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue';
-import { BaseCard, BaseButton, BaseSearchBar } from '../components/base';
+// UI 三批（组1）：删除未使用的 BaseButton 死 import（模板从未渲染该组件）
+import { BaseCard, BaseSearchBar } from '../components/base';
 import { SITE_CATALOG, SITE_CATEGORY_ORDER, type SiteCategory } from '@/data/sites';
+// UI 三批（组6）：面板标题统一引用术语表
+import { PANEL_TITLES } from '../utils/terminology';
 
 const emit = defineEmits<{ (e: 'open-site', url: string): void }>();
 
@@ -51,22 +57,22 @@ const filteredSites = computed(() => {
   });
 });
 
-const CAT_COLORS: Record<string, { bg: string; fg: string }> = {
-  '综合': { bg: 'rgba(99,102,241,0.12)', fg: '#6366f1' },
-  '娱乐': { bg: 'rgba(236,72,153,0.12)', fg: '#ec4899' },
-  '学习': { bg: 'rgba(16,185,129,0.12)', fg: '#10b981' },
-  '英语': { bg: 'rgba(245,158,11,0.12)', fg: '#d97706' },
-  '音乐': { bg: 'rgba(139,92,246,0.12)', fg: '#8b5cf6' },
-  '直播': { bg: 'rgba(239,68,68,0.12)', fg: '#ef4444' },
-  '新闻': { bg: 'rgba(6,182,212,0.12)', fg: '#06b6d4' }
+/**
+ * UI 三批（组2）：站点分类 → tokens.css 中 --sp-cat-{stem}-{bg|fg} 的词干映射。
+ * 原 JS 硬编码 CAT_COLORS 已删除：色值单一来源收敛到 token，
+ * 深色主题由 [data-theme] 下同名 token 自动切换，无需 JS 感知主题。
+ */
+const CAT_TOKEN_STEMS: Record<string, string> = {
+  '综合': 'general', '娱乐': 'entertain', '学习': 'learn', '英语': 'english',
+  '音乐': 'music', '直播': 'live', '新闻': 'news',
 };
-function catColor(c: string) { return CAT_COLORS[c] || CAT_COLORS['综合']; }
+/** 取分类对应 token 词干；未知分类回退「综合」（general），保证样式表达式恒有效 */
+function catStem(c: string): string { return CAT_TOKEN_STEMS[c] || 'general'; }
 
 function openSite(url: string) {
   try { chrome.tabs.create({ url, active: true }); } catch { window.open(url, '_blank'); }
   emit('open-site', url);
 }
-void BaseButton;
 </script>
 
 <style scoped>
@@ -87,8 +93,15 @@ void BaseButton;
   gap: 8px;
 }
 
+/* UI 三批（组3）：site-card 由 div 换成 button——重置 UA 默认样式并补
+   text-align:left / font-family:inherit / width:100%，保持与原 div 布局一致 */
 .site-card {
   display: flex; flex-direction: column; gap: 4px;
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+  appearance: none;
+  -webkit-appearance: none;
   padding: 10px 12px;
   border: 1px solid var(--sp-color-border);
   border-radius: var(--sp-radius-lg);
@@ -101,13 +114,17 @@ void BaseButton;
   box-shadow: var(--sp-shadow-sm);
   transform: translateY(-1px);
 }
+.site-card:focus-visible { outline: 2px solid var(--sp-color-primary); outline-offset: 2px; }
 .site-card.is-hot { border-left: 3px solid var(--sp-color-primary); }
 
 .site-card__head { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
 .site-card__name { font-size: 13px; font-weight: 600; color: var(--sp-color-heading); }
-.site-card__cat { font-size: 10px; font-weight: 600; padding: 1px 7px; border-radius: 999px; flex-shrink: 0; }
-.site-card__desc { font-size: 11px; color: var(--sp-color-text-secondary); line-height: 1.45; min-height: 30px; }
-.site-card__domains { font-size: 10px; color: var(--sp-color-muted); font-family: var(--sp-font-mono); }
+/* UI 三批（组2）：分类胶囊属纯标注文字 10px → 11px */
+.site-card__cat { font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 999px; flex-shrink: 0; }
+/* UI 三批（组2）：站点描述属正文级文字 11px → 12px */
+.site-card__desc { font-size: 12px; color: var(--sp-color-text-secondary); line-height: 1.45; min-height: 30px; }
+/* UI 三批（组2）：域名列表属标注级文字 10px → 11px */
+.site-card__domains { font-size: 11px; color: var(--sp-color-muted); font-family: var(--sp-font-mono); }
 
 .site-card__open {
   margin-top: 2px; font-size: 11px; font-weight: 600; color: var(--sp-color-primary);
@@ -116,5 +133,6 @@ void BaseButton;
 
 .site-empty { grid-column: 1 / -1; padding: 24px; text-align: center; font-size: 12px; color: var(--sp-color-muted); }
 
-.site-note { margin-top: 10px; font-size: 11px; color: var(--sp-color-muted); line-height: 1.5; }
+/* UI 三批（组2）：底部说明属信息性文字 11px → 12px */
+.site-note { margin-top: 10px; font-size: 12px; color: var(--sp-color-muted); line-height: 1.5; }
 </style>

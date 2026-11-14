@@ -41,5 +41,6 @@ th {
   background: var(--sp-color-surface); position: sticky; top: 0; z-index: 10;
 }
 tr:last-child td { border-bottom: none; }
-.is-dense th, .is-dense td { padding: 6px 10px; }
+/* 评审（UI 二批之一）：dense 横向内边距 10px→8px，窄侧栏下把宽度让给数据列 */
+.is-dense th, .is-dense td { padding: 6px 8px; }
 </style>

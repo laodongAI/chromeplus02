@@ -41,11 +41,14 @@ const tooltip = computed(()=> hint(props.code, props.raw));
 </script>
 
 <style scoped>
-.error-badge { display:inline-block; padding:0 6px; line-height:18px; font-size:11px; border-radius:4px; background:#5b1f24; color:#ffb4b4; cursor:help; user-select:none; }
-.error-badge.error-NETWORK { background:#402317; color:#ffcfb4; }
-.error-badge.error-CORS { background:#3d1f40; color:#f2b4ff; }
-.error-badge.error-DRM { background:#2e1f5b; color:#d4c3ff; }
-.error-badge.error-PERMISSION { background:#5b3d1f; color:#ffd9b4; }
-.error-badge.error-NO_RESOURCE { background:#3b4a55; color:#cdd9e5; }
-.error-badge.error-INTERRUPTED { background:#5b1f24; color:#ffb4b4; }
+/* UI 三批（组2）：全部错误码徽章色收进 tokens.css 的 --sp-err-* 系列，
+   深色模式由 [data-theme='dark'] 整体随动，组件内不再硬编码十六进制色。
+   字号 11px 保留：错误码徽章属"纯标注性文字"（组2 允许 11px 的唯一档）。 */
+.error-badge { display:inline-block; padding:0 6px; line-height:18px; font-size:11px; border-radius:4px; background:var(--sp-err-bg); color:var(--sp-err-fg); cursor:help; user-select:none; }
+.error-badge.error-NETWORK { background:var(--sp-err-network-bg); color:var(--sp-err-network-fg); }
+.error-badge.error-CORS { background:var(--sp-err-cors-bg); color:var(--sp-err-cors-fg); }
+.error-badge.error-DRM { background:var(--sp-err-drm-bg); color:var(--sp-err-drm-fg); }
+.error-badge.error-PERMISSION { background:var(--sp-err-permission-bg); color:var(--sp-err-permission-fg); }
+.error-badge.error-NO_RESOURCE { background:var(--sp-err-noresource-bg); color:var(--sp-err-noresource-fg); }
+.error-badge.error-INTERRUPTED { background:var(--sp-err-interrupt-bg); color:var(--sp-err-interrupt-fg); }
 </style>

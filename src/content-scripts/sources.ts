@@ -2,6 +2,14 @@
  * 扫描页面资源文件（用于Sources下载功能）
  */
 
+// 域名黑名单统一使用共享模块（@/utils/domains），消除与 sourcesTree.ts 的两套不一致实现
+import { isBlockedHost } from '@/utils/domains';
+// P1-8：分级日志（内容脚本上下文，warn 级默认可见）
+import { createLogger } from '@/utils/logger';
+
+/** 本模块 logger：保留原 `[sources]` 前缀语义 */
+const log = createLogger('sources');
+
 export interface SourceFile {
   url: string;
   path: string; // 相对路径，用于保持目录结构
@@ -17,21 +25,12 @@ export function scanPageSources(): SourceFile[] {
   const files: SourceFile[] = [];
   const seen = new Set<string>();
   
-  // 黑名单域名（过滤无用的第三方资源）
-  const blacklistDomains = [
-    'google.com', 'gstatic.com', 'doubleclick.net', 'google-analytics.com',
-    'googletagmanager.com', 'facebook.net', 'facebook.com',
-    'bing.com', 'clarity.ms', 'cloudflare.com',
-    'stripe.com', 'licdn.com', 'redditstatic.com',
-    'adswizz.com', 'goentri.com'
-  ];
-  
   const shouldFilter = (url: string): boolean => {
     try {
       const urlObj = new URL(url);
       const host = urlObj.hostname.toLowerCase();
-      // 过滤黑名单域名
-      if (blacklistDomains.some(domain => host.includes(domain))) {
+      // 过滤黑名单域名（后缀精确匹配，替代旧的 includes 宽松匹配）
+      if (isBlockedHost(host)) {
         return true;
       }
       // 只保留localhost和当前域名
@@ -61,7 +60,7 @@ export function scanPageSources(): SourceFile[] {
       }
     });
   } catch (e) {
-    console.warn('[sources] Failed to get performance resources:', e);
+    log.warn('Failed to get performance resources:', e);
   }
 
   // 2. 扫描所有script标签

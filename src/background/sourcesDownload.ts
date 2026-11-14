@@ -1,7 +1,20 @@
 /**
  * Sources面板目录下载管理器
  * 支持下载页面资源文件并保持目录结构，打包成zip
+ * 保存链路：zip Blob 写入 IndexedDB（shared/blobStore）→ 广播 HLS_BLOB_READY
+ * → 侧边栏（hlsBlobDownload）创建 Blob URL 触发 chrome.downloads 保存并回执清理。
+ * 原因：Service Worker 中没有 URL.createObjectURL，不能直接对象 URL 下载，
+ * 与 HLS 产物复用同一套 IDB 交接机制，不另造第二套。
  */
+
+import { MessageType } from '@/messaging';
+import { STORE_HLS_BLOBS, idbPut } from '@/shared/blobStore';
+import type { HlsBlobEntry } from './hls';
+// P1-8：分级日志（SW 上下文默认 info 级）
+import { createLogger } from '@/utils/logger';
+
+/** 本模块 logger：保留原 `[sourcesDownload]` 前缀语义 */
+const log = createLogger('sourcesDownload');
 
 // 动态导入JSZip，避免在background中直接导入导致问题
 let JSZip: any = null;
@@ -26,7 +39,7 @@ interface DownloadTask {
   status: 'pending' | 'downloading' | 'packing' | 'completed' | 'error';
   progress: number;
   error?: string;
-  zipBlob?: Blob;
+  // 注：zip Blob 不再驻留 SW 内存（改经 IDB 交接侧边栏保存），原 zipBlob 字段已移除
 }
 
 const downloadTasks = new Map<string, DownloadTask>();
@@ -92,7 +105,7 @@ export async function startDownloadTask(id: string, onProgress?: (progress: numb
             if (onProgress) onProgress(task.progress);
           }
         } catch (e) {
-          console.warn(`[sourcesDownload] Error packing file ${file.path}:`, e);
+          log.warn(`Error packing file ${file.path}:`, e);
         }
       }
     }
@@ -102,24 +115,20 @@ export async function startDownloadTask(id: string, onProgress?: (progress: numb
       compression: 'DEFLATE',
       compressionOptions: { level: 6 } // 平衡压缩率和速度
     });
-    task.zipBlob = zipBlob;
+
+    // 触发下载：SW 无 URL.createObjectURL，走与 HLS 产物相同的 IDB 交接链路
+    // （侧边栏 hlsBlobDownload 监听 HLS_BLOB_READY → 读 STORE_HLS_BLOBS → 建对象 URL 下载 → 删除 IDB 记录）
+    const fileName = `sources_${Date.now()}.zip`;
+    const entry: HlsBlobEntry = { blob: zipBlob, fileName, mime: 'application/zip', savedAt: Date.now() };
+    await idbPut(STORE_HLS_BLOBS, id, entry);
+    // zip 数据已交 IDB 持有，SW 内存不再驻留 Blob 引用
     task.status = 'completed';
     task.progress = 1;
     if (onProgress) onProgress(1);
-
-    // 触发下载
-    const fileName = `sources_${Date.now()}.zip`;
-    const url = URL.createObjectURL(zipBlob);
-    await chrome.downloads.download({
-      url,
-      filename: fileName,
-      saveAs: false
-    });
-
-    // 清理
-    setTimeout(() => {
-      URL.revokeObjectURL(url);
-    }, 10000);
+    try {
+      await chrome.runtime.sendMessage({ type: MessageType.HLS_BLOB_READY, taskId: id });
+    } catch { /* 侧栏未开：侧栏启动时 sweepPendingBlobs 会补保存 */ }
+    log.info(`任务 ${id} 打包完成（${zipBlob.size} 字节），已写入 IDB 并交接侧边栏保存：${fileName}`);
 
   } catch (e) {
     task.status = 'error';
@@ -164,11 +173,8 @@ export function cleanupOldTasks(): void {
       if (task.id && task.id.includes('_')) {
         const timestamp = parseInt(task.id.split('_')[1]);
         if (timestamp && (now - timestamp) > oneHour) {
+          // 任务记录直接删除即可：zip 数据经 IDB 交接后已由侧边栏清理，SW 不持有 Blob
           downloadTasks.delete(id);
-          // 清理zipBlob以释放内存
-          if (task.zipBlob) {
-            task.zipBlob = undefined;
-          }
         }
       }
     }

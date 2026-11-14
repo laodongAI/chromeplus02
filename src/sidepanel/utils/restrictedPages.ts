@@ -36,11 +36,9 @@ const RULES: RestrictedRule[] = [
     message: '正在查看扩展内部页面或 about: 页面，Chrome 不允许在此注入内容脚本。'
   },
   {
+    // 网上应用店规则去重（P2-5）：正则已同时覆盖 chromewebstore.google.com/.cn
+    // 与旧版 chrome.google.com/webstore，删除了下方完全重复的第 6 条规则。
     test: (url) => /chromewebstore\.google\.(com|cn)/i.test(url) || url.startsWith('https://chrome.google.com/webstore'),
-    message: 'Chrome 网上应用店页面禁止扩展注入内容脚本。'
-  },
-  {
-    test: (url) => url.startsWith('https://chromewebstore.google.com'),
     message: 'Chrome 网上应用店页面禁止扩展注入内容脚本。'
   },
   {

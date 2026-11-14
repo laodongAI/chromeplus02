@@ -9,6 +9,24 @@ export interface NetworkMediaClass {
   kind: NetworkMediaKind | null;
   /** 从 URL 路径或 Content-Type 推断的扩展名 */
   extension?: string;
+  /**
+   * 已识别为媒体流，但取不回独立文件：YouTube SABR 用 POST 向 /videoplayback
+   *持续推送 UMP 封装分块，URL 无扩展名且响应体不是可播放容器。
+   */
+  streamOnly?: boolean;
+}
+
+/** YouTube SABR 专有封装 MIME（实测响应头为 application/vnd.yt-ump） */
+const YT_UMP_CT_RE = /vnd\.yt-ump/i;
+
+/** YouTube 媒体推送端点：*.googlevideo.com/videoplayback */
+function isYouTubeStreamEndpoint(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return /(^|\.)googlevideo\.com$/i.test(u.hostname) && u.pathname === '/videoplayback';
+  } catch {
+    return false;
+  }
 }
 
 /** 视频类扩展名（含 HLS/DASH 分片 ts、m4s） */
@@ -28,11 +46,19 @@ export function extFromUrl(url: string): string | undefined {
   }
 }
 
-function extFromContentType(ct?: string): string | undefined {
+/** Content-Type → 扩展名（供分类与列表格式标签共用，认不出返回 undefined） */
+export function extFromContentType(ct?: string): string | undefined {
   if (!ct) return undefined;
   const c = ct.toLowerCase();
   if (/vnd\.apple\.mpegurl|x-mpegurl|mpegurl/.test(c)) return HLS_EXT;
   if (/dash\+xml/.test(c)) return DASH_EXT;
+  // 音频 MIME 先于泛化匹配：opus 含 ogg 子串，顺序颠倒会把 .opus 标成 .ogg
+  if (/opus/.test(c)) return 'opus';
+  if (/flac/.test(c)) return 'flac';
+  if (/mpeg3|x-mp3|audio\/mpeg/.test(c)) return 'mp3';
+  if (/aac|x-m4a|m4a/.test(c)) return 'm4a';
+  if (/wav|vnd\.wave/.test(c)) return 'wav';
+  if (/ogg/.test(c)) return 'ogg';
   if (/mp4/.test(c)) return 'mp4';
   if (/webm/.test(c)) return 'webm';
   if (/matroska|mkv/.test(c)) return 'mkv';
@@ -59,6 +85,12 @@ export function classifyNetworkMedia(url: string, contentType?: string): Network
     else if (/dash\+xml/.test(c)) kind = 'dash';
     else if (/^video\//.test(c)) kind = 'video';
     else if (/^audio\//.test(c)) kind = 'audio';
+  }
+
+  // YouTube SABR：既无扩展名也无 video/audio MIME，走上面两条规则会被判成非媒体而整条丢弃。
+  // 单独识别为「只能录制、不能直链」的流，让面板能给出可行路径而不是显示未检测到。
+  if (!kind && (YT_UMP_CT_RE.test(contentType || '') || isYouTubeStreamEndpoint(url))) {
+    return { kind: 'video', streamOnly: true };
   }
 
   return { kind, extension: ext || extFromContentType(contentType) };

@@ -1,6 +1,6 @@
 /*! @name mux.js @version 6.3.0 @license Apache-2.0 */
 (function (global, factory) {
-  typeof exports === 'object' && typeof module !== 'undefined' ? module.exports = factory(require('global/window')) :
+  typeof exports === 'object' && typeof module !== 'undefined' ? module.exports = factory(require('./global-window.js')) :
   typeof define === 'function' && define.amd ? define(['global/window'], factory) :
   (global = typeof globalThis !== 'undefined' ? globalThis : global || self, global.muxjs = factory(global.window));
 }(this, (function (window) { 'use strict';

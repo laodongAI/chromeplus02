@@ -22,7 +22,8 @@
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
         </div>
         <span>收集篮是空的</span>
-        <span class="empty-state__hint">在视频/图像/音频面板选中资源后点击「加入收集篮」</span>
+        <!-- UI 三批（组6）：跨面板提示语「图像」统一为 tab 同源词「图片」 -->
+        <span class="empty-state__hint">在视频/图片/音频面板选中资源后点击「加入收集篮」</span>
       </div>
 
       <div v-for="item in displayList" :key="item.id" class="basket-item" :class="{ 'is-selected': selected.has(item.id) }">
@@ -47,7 +48,8 @@
 <script lang="ts">
 import { defineComponent, ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import { BaseCard, BaseButton } from '../components/base';
-import { basketState, subscribeBasket, addToBasket, removeFromBasket, clearBasket, type BasketItem } from '../services/collection';
+// 收口轮 lint 修复：补导入 updateBasketTitlesByUrl（AI 补全标题的写回函数，原代码直接引用未导入）
+import { basketState, subscribeBasket, addToBasket, removeFromBasket, clearBasket, updateBasketTitlesByUrl, type BasketItem } from '../services/collection';
 import { addDownload } from '../services/downloadQueue';
 import { isDownloaded } from '../services/downloadHistory';
 import { exportRowsAsJSON, exportRowsAsCSV } from '../services/exportList';
@@ -159,7 +161,8 @@ export default defineComponent({
       toast.success('已导出 CSV');
     }
 
-    return { basketState, filterKind, displayList, selected, selectedCount, aiBusy, aiFillTitles, toggleSelect, kindLabel, shorten, formatTime, downloadSingle, downloadSelected, onRemove, onClear, exportJson, exportCsv, addToBasket };
+    // 收口轮 lint 修复：模板使用 isDownloaded 但 render 上下文未暴露（原为隐性运行时错误），补入
+    return { basketState, filterKind, displayList, selected, selectedCount, aiBusy, aiFillTitles, toggleSelect, kindLabel, shorten, formatTime, downloadSingle, downloadSelected, onRemove, onClear, exportJson, exportCsv, addToBasket, isDownloaded };
   }
 });
 </script>

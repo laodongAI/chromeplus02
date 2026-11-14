@@ -42,6 +42,48 @@ export async function aiSummarizePage(title: string, textContent: string): Promi
   ], { maxTokens: 500 });
 }
 
+/** 接口 AI 分析输入条目：只保留必要的请求/响应文本，避免 prompt 过大 */
+export interface NetworkInsightItem {
+  /** HTTP 方法（GET/POST/…） */
+  method: string;
+  /** 请求 URL */
+  url: string;
+  /** HTTP 状态码（未收到响应时缺省） */
+  status?: number;
+  /** 响应 MIME 类型 */
+  mimeType?: string;
+  /** 请求体文本（POST/PUT 等） */
+  postData?: string;
+  /** 响应体文本（仅文本/JSON） */
+  responseBody?: string;
+}
+
+/**
+ * 对捕获到的接口请求做语义分析（接口用途 / 关键字段 / 业务流程）。
+ * @param page 当前页面信息（标题与地址，可为空）
+ * @param items 捕获到的接口列表（最多分析 20 条，超出的忽略）
+ * @returns AI 返回的中文分析文本
+ */
+export async function aiAnalyzeNetwork(
+  page: { title?: string; url?: string },
+  items: NetworkInsightItem[]
+): Promise<string> {
+  // 逐条拼接精简上下文：请求体最多 400 字、响应体最多 600 字，防止超出上下文窗口
+  const lines = items.slice(0, 20).map((it, n) => {
+    const req = it.postData ? `\n   请求体：${it.postData.slice(0, 400)}` : '';
+    const res = it.responseBody ? `\n   响应体：${it.responseBody.slice(0, 600)}` : '';
+    const meta = `${it.status ? ` [${it.status}]` : ''}${it.mimeType ? ` (${it.mimeType})` : ''}`;
+    return `${n + 1}. ${it.method} ${it.url}${meta}${req}${res}`;
+  }).join('\n');
+  return aiChat([
+    { role: 'system', content: '你是资深前后端接口分析专家，只输出中文、结构清晰的结论，不要寒暄。' },
+    {
+      role: 'user',
+      content: `请分析以下网页捕获到的接口请求，按三部分输出：\n一、接口清单：逐个说明用途与关键字段（编号与输入对应）；\n二、业务流程：推断页面在做什么、数据如何流转（3-6 句）；\n三、可关注数据：最值得提取的数据点或潜在风险。\n\n页面：${page.title || '（无标题）'} ${page.url || ''}\n接口共 ${items.length} 条（最多分析 20 条）：\n${lines}`
+    }
+  ], { maxTokens: 1200, temperature: 0.3 });
+}
+
 /** 为资源列表建议简洁标题；返回 url → 标题 映射（尽力解析，失败抛错由调用方提示） */
 export async function aiSuggestTitles(items: { url: string; title?: string; kind: string }[], pageContext?: string): Promise<Record<string, string>> {
   const list = items.slice(0, 20).map((i, n) => `${n + 1}. [${i.kind}] ${i.title || '（无标题）'}\n   ${i.url}`).join('\n');

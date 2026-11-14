@@ -65,9 +65,10 @@ describe('site utils（目录驱动）', () => {
     expect(info?.category).toBe('综合');
   });
 
-  it('用户配置可补充目录之外的站点', () => {
-    const cfg = { supportedSites: [{ id: 'mysite', name: '我的站', enabled: true, domains: ['mysite.dev'] }] } as any;
-    expect(isSupportedSite('https://mysite.dev/v/1', cfg)).toBe(true);
-    expect(getSiteInfo('https://mysite.dev/v/1', cfg)?.name).toBe('我的站');
+  it('仅目录驱动：目录之外的站点不受支持（supportedSites 配置分支已随死代码清理移除）', () => {
+    // 回归保障：旧版依赖用户配置 supportedSites 的匹配分支已删除，
+    // 目录之外的站点（如 mysite.dev）不再被识别为支持站点
+    expect(isSupportedSite('https://mysite.dev/v/1')).toBe(false);
+    expect(getSiteInfo('https://mysite.dev/v/1')).toBeNull();
   });
 });

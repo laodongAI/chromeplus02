@@ -1,40 +1,44 @@
 @echo off
 setlocal
-rem 用法：install.bat <扩展ID>
-rem 扩展 ID 在 chrome://extensions 的 MediaPlus 卡片上查看（或设置面板复制）
+rem MediaPlus companion installer.
+rem Usage: install.bat <extension-id>
+rem The extension id is shown on the MediaPlus card at chrome://extensions.
+rem IMPORTANT: keep this file pure ASCII with CRLF line endings
+rem (cmd.exe OEM code page parsing; Chinese docs are in README.md).
 if "%~1"=="" (
-  echo 用法: install.bat ^<扩展ID^>
-  echo 扩展 ID 可在 chrome://extensions 的 MediaPlus 卡片上查看
+  echo Usage: install.bat ^<extension-id^>
+  echo The extension id is shown on the MediaPlus card at chrome://extensions
   exit /b 1
 )
 set EXTID=%~1
 set HOSTNAME=com.chromeplus02.media
 set DEST=%LOCALAPPDATA%\MediaPlusCompanion
 
-echo [1/3] 复制文件到 %DEST% ...
-xcopy /Y /I "%~dp0*" "%DEST%\" >nul
+echo [1/3] Copying files to %DEST% ...
+xcopy /Y /I /E "%~dp0*" "%DEST%\" >nul
 
-echo [2/3] 生成 host 清单（授权扩展 %EXTID%）...
+echo [2/3] Writing host manifest (allowing extension %EXTID%)...
 > "%DEST%\%HOSTNAME%.json" (
   echo {
   echo   "name": "%HOSTNAME%",
-  echo   "description": "MediaPlus 极速下载本地代理",
+  echo   "description": "MediaPlus companion (fast download + desktop overlay)",
   echo   "path": "host.bat",
   echo   "type": "stdio",
   echo   "allowed_origins": ["chrome-extension://%EXTID%/"]
   echo }
 )
 
-echo [3/3] 注册注册表（当前用户）...
+echo [3/3] Registering native messaging host (current user)...
 reg add HKCU\Software\Google\Chrome\NativeMessagingHosts\%HOSTNAME% /ve /d "%DEST%\%HOSTNAME%.json" /f >nul
 
 if not exist "%DEST%\bin\yt-dlp.exe" (
   echo.
-  echo [提示] 未找到 %DEST%\bin\yt-dlp.exe
-  echo        请从 https://github.com/yt-dlp/yt-dlp/releases 下载 yt-dlp.exe
-  echo        放入 %DEST%\bin\ 目录
+  echo [NOTE] %DEST%\bin\yt-dlp.exe not found.
+  echo        Fast download needs it: download yt-dlp.exe from
+  echo        https://github.com/yt-dlp/yt-dlp/releases into %DEST%\bin\
+  echo        Desktop overlay works without it.
 )
 
 echo.
-echo 安装完成。回到扩展「设置 → 极速下载」点击「重新检测」即可。
+echo Done. Go to the extension Settings page and click re-check.
 pause

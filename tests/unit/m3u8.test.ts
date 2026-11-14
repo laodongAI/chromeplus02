@@ -93,6 +93,45 @@ describe('parseM3U8: media 清单', () => {
       ''
     ].join('\n'), BASE);
     expect(r.initSegment).toBe('https://example.com/live/init.mp4');
+    // 收口轮交接项：未声明 BYTERANGE 时 initByterange 应为 undefined
+    expect(r.initByterange).toBeUndefined();
+  });
+
+  it('解析 EXT-X-MAP 的 BYTERANGE（收口轮交接项：透出 initByterange）', () => {
+    const r = parseM3U8([
+      '#EXTM3U',
+      '#EXT-X-MAP:URI="media.mp4",BYTERANGE="735@0"',
+      '#EXTINF:4,',
+      'seg0.m4s',
+      '#EXT-X-ENDLIST',
+      ''
+    ].join('\n'), BASE);
+    expect(r.initSegment).toBe('https://example.com/live/media.mp4');
+    expect(r.initByterange).toEqual({ length: 735, offset: 0 });
+  });
+
+  it('EXT-X-MAP BYTERANGE 省略 offset 时保留 undefined（下载侧按 0 处理）', () => {
+    const r = parseM3U8([
+      '#EXTM3U',
+      '#EXT-X-MAP:URI="init.mp4",BYTERANGE="1024"',
+      '#EXTINF:4,',
+      'seg0.m4s',
+      '#EXT-X-ENDLIST',
+      ''
+    ].join('\n'), BASE);
+    expect(r.initByterange).toEqual({ length: 1024, offset: undefined });
+  });
+
+  it('EXT-X-MAP BYTERANGE 非法（长度非正数）时不透出', () => {
+    const r = parseM3U8([
+      '#EXTM3U',
+      '#EXT-X-MAP:URI="init.mp4",BYTERANGE="0@5"',
+      '#EXTINF:4,',
+      'seg0.m4s',
+      '#EXT-X-ENDLIST',
+      ''
+    ].join('\n'), BASE);
+    expect(r.initByterange).toBeUndefined();
   });
 
   it('解析 EXT-X-BYTERANGE（含隐式偏移延续）', () => {

@@ -9,57 +9,64 @@
         </div>
         <span class="app-logo__name">MediaPlus</span>
       </div>
-      <span class="app-badge">Alpha</span>
+      <div class="app-header__status">
+        <!-- 评审 P0：录制进行中显示全局角标（切走入口也可见），点击回到录制面板恢复完整状态 -->
+        <button
+          v-if="isRecording"
+          class="rec-badge"
+          :class="{ 'is-paused': isRecordingPaused }"
+          title="录制进行中，点击返回录制面板"
+          @click="goToRecording"
+        >
+          <span class="rec-badge__dot"></span>
+          <span>{{ isRecordingPaused ? '已暂停' : '录制中' }} {{ recordingTimerDisplay }}</span>
+        </button>
+        <!-- UI 三批（组6）：展示 manifest 真实版本号而非「Alpha」——
+             manifest version 为 1.0.0 却标 Alpha 会误导用户且与上架审核信息不一致，
+             展示真实版本便于支持排障（用户反馈时可直接报出扩展版本） -->
+        <span class="app-badge">v{{ appVersion }}</span>
+      </div>
     </header>
 
-    <nav class="tab-nav">
-      <div class="tab-groups">
-        <button
-          v-for="g in groups"
-          :key="g.key"
-          class="group-btn"
-          :class="{ 'is-active': g.key === activeGroup.key }"
-          @click="switchGroup(g)"
-        >{{ g.label }}</button>
-      </div>
-      <div class="tab-row">
-        <button
-          v-for="tab in visibleTabs"
-          :key="tab.key"
-          class="tab-btn"
-          :class="{ 'is-active': tab.key === activeTab, 'tab-btn--launch': tab.launch }"
-          :style="tab.key === activeTab ? { '--tab-color': tab.color, '--tab-bg': tab.bgColor } : {}"
-          @click="tab.launch ? launchEditor() : switchTab(tab.key)"
-          :title="tab.description"
-        >
-          <span class="tab-btn__icon" v-html="tab.icon"></span>
-          <span class="tab-btn__label">{{ tab.label }}</span>
-          <span v-if="tab.launch" class="tab-btn__ext-icon">
-            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-          </span>
-          <span class="tab-btn__count" v-if="(counts[tab.metric] ?? 0) > 0 && !tab.launch" :style="{ background: tab.color }">
-            {{ counts[tab.metric] ?? 0 }}
-          </span>
-        </button>
-      </div>
+    <!-- UI 二批之二：两级 11 tab 导航收敛为一级入口（抓取/网站/下载/录制/设置），
+         可访问 tablist 实现（←/→ 方向键切换 + 可见焦点环）；
+         「网站」为支持网站目录，应用户要求与抓取、下载同级 -->
+    <nav class="entry-nav">
+      <BaseSegmented
+        id-base="entry"
+        aria-label="主导航"
+        size="md"
+        :items="entryItems"
+        :model-value="nav.entry"
+        @update:model-value="onEntrySelect"
+      />
     </nav>
 
     <main class="app-body">
-      <GlobalDownloadBar />
-      <Suspense>
-        <component
-          :is="activeComponent"
-          v-bind="activeTab === 'editor' ? { initialFiles: editorFiles } : {}"
-          @open-editor="openInEditor"
-          @open-site="onOpenSite"
-        />
-        <template #fallback>
-          <div class="panel-loading">
-            <div class="panel-loading__spinner"></div>
-            <span>加载中…</span>
-          </div>
-        </template>
-      </Suspense>
+      <!-- 全局下载条：点击"已完成"跳转 下载入口-历史子页签（原跳下载 tab 的语义保留） -->
+      <GlobalDownloadBar @go-downloads="goToDownloadsHistory" />
+      <div class="app-body__panel" role="tabpanel" id="entry-panel" :aria-labelledby="`entry-tab-${nav.entry}`">
+        <Suspense>
+          <!-- 抓取/下载容器以 v-model 风格双向绑定各自子模式（入口层负责持久化）；
+               录制/设置/网站无子模式，多余的 model-value 绑定与事件对它们是惰性透传属性。
+               open-site-catalog：抓取面板空状态的「网站目录」入口 → 切到一级「网站」入口；
+               open-site：网站目录选站打开后 → 切回 抓取-视频 准备一键扫描 -->
+          <component
+            :is="activeComponent"
+            :model-value="activeSubModel"
+            @update:model-value="onSubChange"
+            @open-editor="openInEditor"
+            @open-site-catalog="goToSites"
+            @open-site="onSiteOpened"
+          />
+          <template #fallback>
+            <div class="panel-loading">
+              <div class="panel-loading__spinner"></div>
+              <span>加载中…</span>
+            </div>
+          </template>
+        </Suspense>
+      </div>
     </main>
 
     <BaseToast />
@@ -68,93 +75,220 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, defineAsyncComponent } from 'vue';
+/**
+ * 侧栏入口层（UI 二批之二：信息架构收敛）。
+ * 导航从「组行 + tab 行」两级 11 个 tab 收敛为 5 个一级入口：
+ *  - 抓取   → GrabWorkspace（分段子模式：图片|视频|音频|文本|接口|资源包）
+ *  - 网站   → SiteCatalogPanel（支持网站目录；应用户要求与抓取、下载同级）
+ *  - 下载   → DownloadsWorkspace（子页签：收集篮|进行中|历史）
+ *  - 录制   → ScreenRecordPanel（文案统一为"录制"，仅屏幕/标签页录制）
+ *  - 设置   → SettingsPanel（唯一设置入口；options_ui 已在上轮移除，不再加回）
+ * 「编辑」不再是入口：它是 launch 型动作（新标签页打开编辑器），
+ * 由 ScreenRecordPanel 等结果项上的"在编辑器中打开"动作触发（openInEditor）。
+ */
+import { computed, onMounted, reactive, ref, watch, defineAsyncComponent, type Component } from 'vue';
 import { provideResourceCounts } from './composables/useResourceCounts';
 import GlobalDownloadBar from './components/GlobalDownloadBar.vue';
 import BaseToast from './components/base/BaseToast.vue';
 import BaseConfirm from './components/base/BaseConfirm.vue';
+import BaseSegmented from './components/base/BaseSegmented.vue';
+// UI 二批之二：导航状态（类型/默认值/持久化）统一由 navState 模块承载
+import {
+  DEFAULT_NAV_STATE,
+  type DownloadsSubKey,
+  type EntryKey,
+  type GrabSubKey,
+  type NavState,
+  loadNavState,
+  saveNavState,
+} from './services/navState';
+// P1-8：分级日志（扩展页面上下文默认 info 级）
+import { createLogger } from '@/utils/logger';
+// UI 三批（组6）：一级入口文案引用术语表（下载/录制/网站的入口名与全站成对术语同源）
+import { DOWNLOAD_TERMS, RECORD_TERMS, SITES_TERMS } from './utils/terminology';
+// 编辑器启动（新标签页 + IndexedDB 键交接；与录制成果列表共用）
+import { openClipsInEditor } from './utils/editorLauncher';
+import { toast } from './composables/useToast';
+// 评审 P0：录屏运行时状态提升到模块级 store；入口层直接订阅，
+// 使"录制中"角标在任意入口下都可见、计时连续（不依赖录制面板是否挂载）
+import {
+  recording as isRecording,
+  paused as isRecordingPaused,
+  timerDisplay as recordingTimerDisplay,
+} from './services/recordingStore';
 
-const AsyncSiteCatalogPanel     = defineAsyncComponent(() => import('./views/SiteCatalogPanel.vue'));
-const AsyncVideoCapturePanel    = defineAsyncComponent(() => import('./views/VideoCapturePanel.vue'));
-const AsyncImageGrabPanel       = defineAsyncComponent(() => import('./views/ImageGrabPanel.vue'));
-const AsyncAudioGrabPanel       = defineAsyncComponent(() => import('./views/AudioGrabPanel.vue'));
-const AsyncTextPanel            = defineAsyncComponent(() => import('./views/TextPanel.vue'));
-const AsyncDownloadManagerPanel = defineAsyncComponent(() => import('./views/DownloadManagerPanel.vue'));
-const AsyncSourcesDownloadPanel = defineAsyncComponent(() => import('./views/SourcesDownloadPanel.vue'));
-const AsyncSettingsPanel        = defineAsyncComponent(() => import('./views/SettingsPanel.vue'));
-const AsyncScreenRecordPanel    = defineAsyncComponent(() => import('./views/ScreenRecordPanel.vue'));
-const AsyncVideoEditorPanel     = defineAsyncComponent(() => import('./views/VideoEditorPanel.vue'));
-const AsyncCollectionPanel      = defineAsyncComponent(() => import('./views/CollectionPanel.vue'));
+/** 本模块 logger：记录入口切换、跳转联动等导航里程碑 */
+const log = createLogger('SidePanelApp');
 
-type TabKey = 'video'|'image'|'audio'|'text'|'downloads'|'sources'|'settings'|'screenrec'|'editor'|'basket'|'sites';
-type GroupKey = 'grab' | 'tools' | 'manage' | 'system';
+// ── 一级入口 → 容器/面板组件（异步加载，保持首屏包体不变大） ──
+const AsyncGrabWorkspace      = defineAsyncComponent(() => import('./views/GrabWorkspace.vue'));
+const AsyncSiteCatalogPanel   = defineAsyncComponent(() => import('./views/SiteCatalogPanel.vue'));
+const AsyncDownloadsWorkspace = defineAsyncComponent(() => import('./views/DownloadsWorkspace.vue'));
+const AsyncScreenRecordPanel  = defineAsyncComponent(() => import('./views/ScreenRecordPanel.vue'));
+const AsyncSettingsPanel      = defineAsyncComponent(() => import('./views/SettingsPanel.vue'));
 
-const tabs = [
-  { key:'sites'     as TabKey, label:'网站',   description:'内置支持网站目录：选站点 → 打开 → 一键扫描', metric:'sites'     as TabKey, color:'#0ea5e9', bgColor:'rgba(14,165,233,0.08)',  component:AsyncSiteCatalogPanel,
-    icon:`<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>` },
-  { key:'video'     as TabKey, label:'视频',   description:'识别并控制页面视频，支持录制与抓帧',    metric:'video'     as TabKey, color:'#6366f1', bgColor:'rgba(99,102,241,0.08)',  component:AsyncVideoCapturePanel,
-    icon:`<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>` },
-  { key:'image'     as TabKey, label:'图像',   description:'扫描页面图片，支持预览与批量下载',      metric:'image'     as TabKey, color:'#8b5cf6', bgColor:'rgba(139,92,246,0.08)',  component:AsyncImageGrabPanel,
-    icon:`<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>` },
-  { key:'audio'     as TabKey, label:'音频',   description:'提取音频资源，进行单个或批量下载',      metric:'audio'     as TabKey, color:'#10b981', bgColor:'rgba(16,185,129,0.08)',  component:AsyncAudioGrabPanel,
-    icon:`<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>` },
-  { key:'text'      as TabKey, label:'文本',   description:'提取页面正文、元数据与结构化信息',      metric:'text'      as TabKey, color:'#f59e0b', bgColor:'rgba(245,158,11,0.08)',  component:AsyncTextPanel,
-    icon:`<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>` },
-  { key:'downloads' as TabKey, label:'下载',   description:'查看下载历史与任务状态',               metric:'downloads' as TabKey, color:'#06b6d4', bgColor:'rgba(6,182,212,0.08)',   component:AsyncDownloadManagerPanel,
-    icon:`<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>` },
-  { key:'basket'    as TabKey, label:'收集篮', description:'跨页面暂存资源，统一下载或导出',        metric:'basket'    as TabKey, color:'#f97316', bgColor:'rgba(249,115,22,0.08)',  component:AsyncCollectionPanel,
-    icon:`<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>` },
-  { key:'sources'   as TabKey, label:'Sources',description:'下载页面资源文件并保持目录结构',        metric:'sources'   as TabKey, color:'#ec4899', bgColor:'rgba(236,72,153,0.08)',  component:AsyncSourcesDownloadPanel,
-    icon:`<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>` },
-  { key:'screenrec' as TabKey, label:'录屏',   description:'录制屏幕、窗口或标签页',               metric:'screenrec' as TabKey, color:'#ef4444', bgColor:'rgba(239,68,68,0.08)',   component:AsyncScreenRecordPanel,
-    icon:`<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>` },
-  { key:'editor'    as TabKey, label:'编辑',   description:'点击在新标签页打开全屏视频编辑器',   metric:'editor'    as TabKey, color:'#6366f1', bgColor:'rgba(99,102,241,0.08)',  component:AsyncVideoEditorPanel, launch: true,
-    icon:`<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>` },
-  { key:'settings'  as TabKey, label:'设置',   description:'配置扫描策略、命名模板与存储路径',     metric:'settings'  as TabKey, color:'#6b7280', bgColor:'rgba(107,114,128,0.08)', component:AsyncSettingsPanel,
-    icon:`<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>` },
-];
+/** 一级入口键 → 挂载组件 的渲染映射（与 navState.ENTRY_PANEL_IDS 一一对应） */
+const ENTRY_COMPONENTS: Record<EntryKey, Component> = {
+  grab:      AsyncGrabWorkspace,
+  sites:     AsyncSiteCatalogPanel,
+  downloads: AsyncDownloadsWorkspace,
+  record:    AsyncScreenRecordPanel,
+  settings:  AsyncSettingsPanel,
+};
 
-const activeTab  = ref<TabKey>('video');
-const editorFiles = ref<{ name: string; blob: Blob; url: string }[]>([]);
+/**
+ * UI 三批（组6）：头部版本徽章展示的扩展版本号。
+ * 初值 '1.0.0' 为兜底；onMounted 读取 manifest 真实 version 覆盖，
+ * 替换原先与 manifest 并存的「Alpha」字样（误导用户且与上架信息不一致）。
+ */
+const appVersion = ref('1.0.0');
+
+// ── 导航状态：入口 + 两个可记忆子模式；持久化到 chrome.storage.local ──
+const nav = reactive<NavState>({ ...DEFAULT_NAV_STATE });
+/** 持久化状态是否已完成首次加载：加载完成前不写回，避免默认值覆盖旧记录 */
+const navReady = ref(false);
+
+onMounted(async () => {
+  // UI 三批（组6）：读取 manifest 真实版本号供头部徽章展示；
+  // 非扩展运行环境（如单测 jsdom 无 chrome 全局）try/catch 回退 '1.0.0'
+  try {
+    appVersion.value = chrome.runtime.getManifest().version;
+    log.debug('已读取 manifest 版本号', appVersion.value);
+  } catch { /* noop：chrome 不可用时保留兜底版本 */ }
+  // 恢复上次停留的入口/子模式（内部兼容旧键迁移与非法值回退，绝不会停在空白页）
+  const restored = await loadNavState();
+  Object.assign(nav, restored);
+  navReady.value = true;
+  log.info('导航状态已恢复', restored);
+});
+
+// 导航状态任意变化即持久化（deep 监听；加载完成前跳过，见 navReady 注释）
+watch(nav, () => {
+  if (!navReady.value) return;
+  void saveNavState({ entry: nav.entry, grabSub: nav.grabSub, downloadsSub: nav.downloadsSub });
+}, { deep: true });
+
+/** 资源计数上下文：抓取徽标 = 各抓取子模式计数之和（含接口）；下载徽标 = 收集篮数量 */
 const { counts } = provideResourceCounts();
-const activeComponent = computed(() => tabs.find(t => t.key === activeTab.value)?.component || AsyncVideoCapturePanel);
 
-// ── 分组导航：降低 10 个平级 Tab 的认知负担（UX-MULTI-TAB-001） ──
-const groups: { key: GroupKey; label: string; tabs: TabKey[] }[] = [
-  { key: 'grab',   label: '抓取', tabs: ['sites', 'video', 'image', 'audio', 'text'] },
-  { key: 'tools',  label: '工具', tabs: ['sources', 'screenrec', 'editor'] },
-  { key: 'manage', label: '管理', tabs: ['downloads', 'basket'] },
-  { key: 'system', label: '系统', tabs: ['settings'] }
-];
-const activeGroup = computed(() => groups.find(g => g.tabs.includes(activeTab.value)) || groups[0]);
-const visibleTabs = computed(() => tabs.filter(t => activeGroup.value.tabs.includes(t.key)));
+/** 一级入口的分段项定义（图标沿用原 tab 内联 SVG） */
+const entryItems = computed(() => [
+  {
+    key: 'grab' as EntryKey,
+    label: '抓取',
+    title: '扫描页面图片/视频/音频/文本/接口/资源包',
+    count: counts.video + counts.image + counts.audio + counts.text + counts.network + counts.sources,
+    icon: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>`,
+  },
+  {
+    key: 'sites' as EntryKey,
+    // 入口名引用 SITES_TERMS.entry（与面板标题「支持网站」同源）
+    label: SITES_TERMS.entry,
+    title: '支持网站目录：选站打开后一键扫描抓取',
+    count: counts.sites,
+    icon: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>`,
+  },
+  {
+    key: 'downloads' as EntryKey,
+    // UI 三批（组6）：入口名引用 DOWNLOAD_TERMS.entry（与「下载记录」成对同源）
+    label: DOWNLOAD_TERMS.entry,
+    title: '收集篮 / 进行中任务 / 下载历史',
+    count: counts.basket,
+    icon: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`,
+  },
+  {
+    key: 'record' as EntryKey,
+    // UI 三批（组6）：入口名引用 RECORD_TERMS.entry（与「桌面录制」成对同源）
+    label: RECORD_TERMS.entry,
+    title: '录制屏幕、窗口或标签页',
+    count: 0,
+    icon: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>`,
+  },
+  {
+    key: 'settings' as EntryKey,
+    label: '设置',
+    title: '配置扫描策略、命名模板与快捷键提示',
+    count: 0,
+    icon: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>`,
+  },
+]);
 
-function switchTab(key: TabKey) { activeTab.value = key; }
-/** 从网站目录打开站点：新标签页打开后，侧栏自动切到「抓取-视频」准备扫描 */
-function onOpenSite(url: string) {
-  activeTab.value = 'video';
-  void url;
+/** 当前入口挂载的组件 */
+const activeComponent = computed<Component>(() => ENTRY_COMPONENTS[nav.entry]);
+
+/**
+ * 传给当前容器的子模式绑定值：
+ * 只有 抓取/下载 两个容器有子模式；录制/设置返回 undefined（组件不声明该 prop，透传惰性）。
+ */
+const activeSubModel = computed<string | undefined>(() => {
+  if (nav.entry === 'grab') return nav.grabSub;
+  if (nav.entry === 'downloads') return nav.downloadsSub;
+  return undefined;
+});
+
+/**
+ * 一级入口选择回调（BaseSegmented 发出 string，收窄为 EntryKey）。
+ * @param key 入口键
+ */
+function onEntrySelect(key: string): void {
+  const entry = key as EntryKey;
+  if (entry === nav.entry) return;
+  log.debug(`切换一级入口: ${nav.entry} -> ${entry}`);
+  nav.entry = entry;
 }
 
-function switchGroup(g: { key: GroupKey; tabs: TabKey[] }) {
-  if (!g.tabs.includes(activeTab.value)) activeTab.value = g.tabs[0];
+/**
+ * 容器子模式变更回调：按当前入口分发到对应停留位（随后由 watch 统一持久化）。
+ * @param v 子模式键（抓取为 GrabSubKey / 下载为 DownloadsSubKey）
+ */
+function onSubChange(v: unknown): void {
+  const sub = String(v);
+  if (nav.entry === 'grab') nav.grabSub = sub as GrabSubKey;
+  else if (nav.entry === 'downloads') nav.downloadsSub = sub as DownloadsSubKey;
 }
 
-/** 在当前窗口的当前标签页左侧打开全屏编辑器（通过 chrome.tabs.create 在同窗口新标签打开） */
-function launchEditor(clips?: { name: string; url: string }[]) {
-  const editorUrl = chrome.runtime.getURL('src/editor/index.html');
-  // 用 chrome.tabs.create 在同窗口打开，用户在左侧就能看到编辑器
-  chrome.tabs.create({ url: editorUrl }, (tab) => {
-    if (!clips?.length) return;
-    // 通过 chrome.storage.session 传递待编辑文件（无需等待消息）
-    chrome.storage.session?.set({ pendingEditorClips: clips });
-  });
+/** 头部"录制中 mm:ss"角标点击：回到录制入口（原跳录屏 tab 的语义保留，文案统一为"录制"） */
+function goToRecording(): void {
+  log.info('点击录制角标，切回录制入口');
+  nav.entry = 'record';
 }
 
-function openInEditor(rec: { name: string; blob: Blob; url: string }) {
-  launchEditor([{ name: rec.name, url: rec.url }]);
-  // 同时更新侧边栏内的编辑器文件列表（备用）
-  editorFiles.value = [...editorFiles.value, rec];
+/** 全局下载条点击"已完成"：跳转 下载入口 + 历史子页签（原跳下载 tab 查看历史的语义保留） */
+function goToDownloadsHistory(): void {
+  log.info('点击下载条完成状态，跳转下载入口-历史子页签');
+  nav.entry = 'downloads';
+  nav.downloadsSub = 'history';
+}
+
+/** 抓取面板空状态点击「网站目录」：切到一级「网站」入口（网站已与抓取同级） */
+function goToSites(): void {
+  log.info('从抓取空状态进入一级网站入口');
+  nav.entry = 'sites';
+}
+
+/**
+ * 网站目录中选站打开后：切回 抓取-视频 准备一键扫描
+ * （开新标签页由 SiteCatalogPanel 自身完成，此处仅做导航回切）
+ */
+function onSiteOpened(url: string): void {
+  void url; // 站点已在新标签页打开
+  log.info('已从网站目录打开站点，切回抓取-视频等待扫描');
+  nav.entry = 'grab';
+  nav.grabSub = 'video';
+}
+
+/**
+ * 面板发出"在编辑器中打开"：统一走新标签页全屏编辑器。
+ * 交 Blob 而非 rec.url：object URL 属于侧栏文档，用户关掉侧栏后就失效，
+ * 由 editorLauncher 落 IndexedDB 后交键，编辑器自取（见 shared/editorHandoff.ts）。
+ */
+async function openInEditor(rec: { name: string; blob: Blob }) {
+  try {
+    await openClipsInEditor([{ name: rec.name, blob: rec.blob }]);
+  } catch (e) {
+    log.error('打开编辑器失败', e);
+    toast.error(e instanceof Error ? e.message : '打开编辑器失败');
+  }
 }
 </script>
 
@@ -184,7 +318,8 @@ function openInEditor(rec: { name: string; blob: Blob; url: string }) {
 .app-logo {
   width: 28px; height: 28px;
   border-radius: 8px;
-  background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+  /* UI 三批（组2）：硬编码渐变端点改 token——primary 与 brand-violet，深色主题随 token 切换 */
+  background: linear-gradient(135deg, var(--sp-color-primary) 0%, var(--sp-brand-violet) 100%);
   display: flex; align-items: center; justify-content: center;
   box-shadow: 0 2px 8px rgba(99,102,241,0.35);
   flex-shrink: 0;
@@ -197,97 +332,54 @@ function openInEditor(rec: { name: string; blob: Blob; url: string }) {
 }
 
 .app-badge {
+  /* 组2：版本徽章属标注级文字，11px 保留 */
   font-size: 11px; font-weight: 600;
   letter-spacing: 0.06em; text-transform: uppercase;
-  color: #d97706;
-  background: rgba(245,158,11,0.12);
-  border: 1px solid rgba(245,158,11,0.28);
+  /* UI 三批（组2）：warning 硬编码色（#d97706 / rgba(245,158,11,…)）收敛为 warning token 系 */
+  color: var(--sp-color-warning);
+  background: var(--sp-color-warning-light);
+  border: 1px solid var(--sp-color-warning);
   padding: 2px 8px;
   border-radius: 999px;
 }
 
-/* ── Tab Nav（分组：组行 + 当前组 Tab 行） ── */
-.tab-nav {
-  display: flex;
-  flex-direction: column;
+/* 头部右侧状态区：录制角标 + 版本徽章（UI 三批·组6：Alpha 改真实版本号） */
+.app-header__status { display: flex; align-items: center; gap: 8px; }
+
+/* 录制中全局角标（评审 P0）：复用 danger token，样式对齐 .app-badge 的胶囊形态 */
+.rec-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11px; font-weight: 600;
+  font-family: var(--sp-font-family);
+  color: var(--sp-color-danger);
+  background: var(--sp-color-danger-light);
+  border: 1px solid rgba(239,68,68,0.28);
+  padding: 2px 8px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all var(--sp-transition-fast);
+}
+.rec-badge:hover { border-color: var(--sp-color-danger); }
+.rec-badge.is-paused { opacity: 0.75; }
+.rec-badge.is-paused .rec-badge__dot { animation: none; }
+
+/* 录制指示点：与录制面板 .rec-pulse 同样的呼吸节奏 */
+.rec-badge__dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--sp-color-danger);
+  animation: rec-badge-pulse 1.2s ease infinite;
+  flex-shrink: 0;
+}
+@keyframes rec-badge-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+/* ── 一级入口导航（4 入口单行，替代原 组行 + tab 行 两级导航） ── */
+.entry-nav {
   background: var(--sp-color-bg-elevated);
   border-bottom: 1px solid var(--sp-color-border);
   flex-shrink: 0;
-}
-
-.tab-groups {
-  display: flex;
-  gap: 2px;
-  padding: 6px 8px 0;
-}
-
-.group-btn {
-  padding: 3px 10px;
-  border: none;
-  border-radius: var(--sp-radius-full);
-  background: transparent;
-  color: var(--sp-color-muted);
-  font-size: 11px;
-  font-weight: 600;
-  font-family: var(--sp-font-family);
-  cursor: pointer;
-  transition: all var(--sp-transition-fast);
-}
-.group-btn:hover { color: var(--sp-color-text); background: var(--sp-color-surface); }
-.group-btn.is-active {
-  color: var(--sp-color-primary);
-  background: var(--sp-color-primary-light);
-}
-
-.tab-row {
-  display: flex;
-  overflow-x: auto;
-  scrollbar-width: none;
-  gap: 0;
-}
-.tab-row::-webkit-scrollbar { display: none; }
-
-.tab-btn {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 3px;
-  padding: 8px 6px;
-  border: none;
-  background: transparent;
-  color: var(--sp-color-muted);
-  cursor: pointer;
-  flex: 1;
-  min-width: 44px;
-  position: relative;
-  border-bottom: 2px solid transparent;
-  transition: all var(--sp-transition-fast);
-  white-space: nowrap;
-}
-
-.tab-btn:hover {
-  background: var(--sp-color-surface);
-  color: var(--sp-color-text);
-}
-
-.tab-btn.is-active {
-  color: var(--tab-color, var(--sp-color-primary));
-  border-bottom-color: var(--tab-color, var(--sp-color-primary));
-  background: var(--tab-bg, var(--sp-color-primary-light));
-}
-
-.tab-btn__icon { display: flex; align-items: center; justify-content: center; line-height: 0; }
-.tab-btn__label { font-size: 11px; font-weight: 600; letter-spacing: 0.01em; }
-
-.tab-btn__count {
-  position: absolute; top: 4px; right: 4px;
-  font-size: 11px; font-weight: 700;
-  color: white;
-  border-radius: 999px;
-  min-width: 14px; height: 14px;
-  display: flex; align-items: center; justify-content: center;
-  padding: 0 3px; line-height: 1;
 }
 
 /* ── Body ── */
@@ -297,6 +389,14 @@ function openInEditor(rec: { name: string; blob: Blob; url: string }) {
   flex-direction: column;
   overflow-y: auto;
   overflow-x: hidden;
+  min-height: 0;
+}
+
+/* tabpanel 包裹层：让容器（抓取/下载工作区）撑满剩余高度 */
+.app-body__panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
   min-height: 0;
 }
 

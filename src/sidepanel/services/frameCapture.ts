@@ -1,5 +1,10 @@
 import { getActiveTabId } from '../utils/chromeMessaging';
-import { buildUnifiedMediaKey } from '../utils/mediaKeys';
+import { buildUnifiedMediaKey } from '@/utils/mediaKeys';
+// P1-8：分级日志（扩展页面上下文默认 info 级）
+import { createLogger } from '@/utils/logger';
+
+/** 本模块 logger：保留原 `[frameCapture]` 前缀语义 */
+const log = createLogger('frameCapture');
 
 export interface CapturedFrame {
   url: string; // data URL
@@ -38,7 +43,7 @@ function schedule(){
         frame.key = buildUnifiedMediaKey(frame);
         dispatchFrame(frame);
       }
-    } catch(e){ console.warn('[frameCapture] frame fail', e); }
+    } catch(e){ log.warn('frame fail', e); }
     schedule();
   }, intervalMs);
 }

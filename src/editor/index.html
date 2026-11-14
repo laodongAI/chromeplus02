@@ -1,14 +1,16 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<!-- UI 三批（组4）：编辑器强制暗色主题（data-theme='dark' 让 tokens.css 深色变量生效），
+     页面底色与编辑器实底一致，消除"浅色底先渲染再被深色应用覆盖"的加载白闪 -->
+<html lang="zh-CN" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MediaPlus 视频编辑器</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <!-- UI 三批（组5）：移除 Google Fonts 远程 link，字体走 tokens.css 系统栈 -->
     <style>
-      html, body { height: 100%; margin: 0; padding: 0; overflow: hidden; background: #f5f6fa; }
+      /* 底色取 tokens.css 深色 --sp-color-bg（#14161d）的字面副本：
+         内联样式在 CSS 打包加载前生效，必须硬编码才能防白闪 */
+      html, body { height: 100%; margin: 0; padding: 0; overflow: hidden; background: #14161d; color-scheme: dark; }
       #app { height: 100%; display: flex; flex-direction: column; }
     </style>
   </head>

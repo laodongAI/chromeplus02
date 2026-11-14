@@ -31,11 +31,6 @@ describe('parseMPD: 静态 MPD（$Number$ 模板）', () => {
   });
 
   it('音视频分轨分别归类', () => {
-    const mpd = STATIC_MPD.replace('</Period>', `</Period>
-    <Period><AdaptationSet contentType="audio" mimeType="audio/mp4">
-      <SegmentTemplate timescale="48000" duration="960000" media="a/$Number$.m4a"/>
-      <Representation id="a128" bandwidth="128000"/>
-    </AdaptationSet></Period>`).replace('<Period>', '<Period>');
     // 多 Period 会进入 unsupported —— 单独测音频归类用单 Period 版本
     const single = STATIC_MPD.replace('</AdaptationSet>', `</AdaptationSet>
       <AdaptationSet contentType="audio" mimeType="audio/mp4">

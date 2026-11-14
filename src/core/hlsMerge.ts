@@ -24,17 +24,37 @@ export interface MergedMedia {
   extension: string;
 }
 
-export function mergeSegments(parts: Uint8Array[], type: HlsMergeType): MergedMedia {
+/**
+ * 合并类型 → MIME/扩展名的唯一映射来源（收口轮交接项）。
+ * 此前 background/hls.ts 因流式合并不能物化 Uint8Array 数组，本地复制了一份
+ * MERGE_META；现抽出 `mergeBlobParts`（接受 BlobPart[]，直接引用拼接），
+ * 两处共用同一映射，消除双份配置不一致风险。
+ */
+export const MERGE_META: Record<HlsMergeType, { mime: string; extension: string }> = {
+  fmp4: { mime: 'video/mp4', extension: 'mp4' },
+  aac: { mime: 'audio/aac', extension: 'aac' },
+  ts: { mime: 'video/mp2t', extension: 'ts' }
+};
+
+/**
+ * 合并任意 BlobPart（Uint8Array / ArrayBuffer / Blob 引用）为最终产物。
+ * 流式路径传入独立 Blob 数组时仅做引用拼接，不会把分片数据物化回连续内存。
+ * @param parts 分片数据（顺序即拼接顺序）
+ * @param type  合并类型（决定 MIME/扩展名）
+ */
+export function mergeBlobParts(parts: BlobPart[], type: HlsMergeType): MergedMedia {
   if (!parts.length) throw new Error('没有可合并的分片数据');
-  switch (type) {
-    case 'fmp4':
-      return { blob: new Blob(parts as BlobPart[], { type: 'video/mp4' }), mime: 'video/mp4', extension: 'mp4' };
-    case 'aac':
-      return { blob: new Blob(parts as BlobPart[], { type: 'audio/aac' }), mime: 'audio/aac', extension: 'aac' };
-    case 'ts':
-    default:
-      return { blob: new Blob(parts as BlobPart[], { type: 'video/mp2t' }), mime: 'video/mp2t', extension: 'ts' };
-  }
+  const { mime, extension } = MERGE_META[type] || MERGE_META.ts;
+  return { blob: new Blob(parts, { type: mime }), mime, extension };
+}
+
+/**
+ * 合并 Uint8Array 分片数组（旧入口，保留兼容：内部委托 mergeBlobParts）。
+ * @param parts 分片字节数组
+ * @param type  合并类型
+ */
+export function mergeSegments(parts: Uint8Array[], type: HlsMergeType): MergedMedia {
+  return mergeBlobParts(parts as BlobPart[], type);
 }
 
 /** 将多个分片按序拼为单个 Uint8Array（转封装器需要整段连续数据） */

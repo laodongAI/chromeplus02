@@ -1,11 +1,10 @@
 {
   "manifest_version": 3,
-  "name": "网页内容分析工具",
+  "name": "MediaPlus - 网页媒体抓取与下载",
   "version": "1.0.0",
-  "description": "支持B站、抖音、YouTube等多平台视频内容分析的智能助手",
+  "description": "扫描并下载网页中的图片、视频、音频、文本与资源包；支持屏幕/窗口/标签页录制与桌面标注、HLS 合并、批量下载与收集篮管理。",
   "permissions": [
     "tabs",
-    "activeTab",
     "scripting",
     "storage",
     "sidePanel",
@@ -18,23 +17,10 @@
     "nativeMessaging"
   ],
   "host_permissions": [
-    "<all_urls>",
-    "*://*.bilibili.com/*",
-    "https://b23.tv/*",
-    "*://*.douyin.com/*",
-    "*://*.youtube.com/*",
-    "https://youtu.be/*",
-    "*://*.zhihu.com/*",
-    "*://*.weibo.com/*",
-    "*://*.xiaohongshu.com/*",
-    "*://*.npr.org/*",
-    "https://ondemand.npr.org/*",
-    "https://api.moonshot.cn/*",
-    "https://api.openai.com/*",
-    "http://localhost:51512/*"
+    "<all_urls>"
   ],
   "action": {
-    "default_title": "网页内容分析工具",
+    "default_title": "MediaPlus - 网页媒体抓取与下载",
     "default_icon": {
       "16": "icons/icon-16.png",
       "48": "icons/icon-48.png",
@@ -51,45 +37,29 @@
   "content_scripts": [
     {
       "matches": [
-        "<all_urls>",
-        "*://*.bilibili.com/*",
-        "https://b23.tv/*",
-        "*://*.douyin.com/*",
-        "*://*.youtube.com/*",
-        "https://youtu.be/*",
-        "*://*.zhihu.com/*",
-        "*://*.weibo.com/*",
-        "*://*.xiaohongshu.com/*",
-        "*://*.npr.org/*"
+        "<all_urls>"
       ],
       "js": [
         "js/content.js"
       ],
       "run_at": "document_end",
-      "all_frames": true,
-      "match_about_blank": true
+      "all_frames": true
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "js/webrtc-main.js",
+        "js/webrtc-bridge.js"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
     }
   ],
   "icons": {
     "16": "icons/icon-16.png",
     "48": "icons/icon-48.png",
     "128": "icons/icon-128.png"
-  },
-  "web_accessible_resources": [
-    {
-      "resources": [
-        "src/editor/*",
-        "src/editor/index.html",
-        "src/editor/main.ts"
-      ],
-      "matches": [
-        "<all_urls>",
-        "chrome-extension://*/*"
-      ]
-    }
-  ],
-  "options_ui": {
-    "page": "src/editor/index.html",
-    "open_in_tab": true
   }
 }

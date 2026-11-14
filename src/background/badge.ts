@@ -5,9 +5,14 @@
  * 录制优先级高于计数；标签页关闭/刷新时状态复位。
  */
 
-import { MessageType } from '@/messaging';
+import { MessageType, type VideoRecordingStatusMessage } from '@/messaging';
 import { registerBgHandler } from './bus';
 import { countTabSources, setCaptureChangedHandler } from './capture';
+// P1-8：分级日志（SW 上下文默认 info 级）
+import { createLogger } from '@/utils/logger';
+
+/** 本模块 logger：保留原 `[bg.badge]` 前缀语义 */
+const log = createLogger('bg.badge');
 
 const COUNT_COLOR = '#6366f1';
 const REC_COLOR = '#ef4444';
@@ -46,7 +51,8 @@ export function initBadge(): void {
     setCaptureChangedHandler(refreshThrottled);
 
     // 录制状态广播（内容脚本 → 后台，无响应）
-    registerBgHandler(MessageType.VIDEO_RECORDING_STATUS, (message, sender) => {
+    // P1-1：泛型收窄到录制状态广播消息，message.status 直接可用
+    registerBgHandler<VideoRecordingStatusMessage>(MessageType.VIDEO_RECORDING_STATUS, (message, sender) => {
       const tabId = sender?.tab?.id;
       if (typeof tabId !== 'number') return undefined;
       if (message?.status === 'started') recordingTabs.add(tabId);
@@ -71,6 +77,6 @@ export function initBadge(): void {
       if (tabs[0]?.id != null) refreshCountBadge(tabs[0].id);
     }).catch(() => { /* noop */ });
   } catch (e) {
-    try { console.warn('[bg.badge] 初始化失败:', e); } catch { /* noop */ }
+    try { log.warn('初始化失败:', e); } catch { /* noop */ }
   }
 }

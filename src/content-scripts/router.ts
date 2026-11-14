@@ -10,23 +10,129 @@ import type { AudioItem } from './audio';
 import { scanImages } from './images';
 import type { ImageScanItem } from './images';
 import { scanPageSources } from './sources';
-import { MessageType, type VideoItemDTO, type VideoSourceCandidate, type VideoControlAction, type PongMessage } from '@/messaging';
+import { MessageType, type VideoItemDTO, type VideoSourceCandidate, type VideoControlAction, type PongMessage, type CaptureRecordingMeta } from '@/messaging';
+// 深度查询（含 Shadow DOM）统一使用共享工具，消除与 images.ts / audio.ts 的三份重复实现
+import { deepQuerySelectorAll } from '@/utils/dom';
+// 图片 diff key 与侧栏共用同一构造器：两侧格式必须逐字一致，否则 diff.removed 在面板里永远找不到对应行
+import { buildUnifiedMediaKey } from '@/utils/mediaKeys';
+// P1-8：分级日志（内容脚本默认 warn 以上才输出，宿主页面控制台不再被 debug/info 刷屏）
+import { createLogger } from '@/utils/logger';
 import { initTextExtractor } from './text';
 import { toggleAnnotate } from './annotate';
+import { toggleCursorHighlight } from './cursorHighlight';
+
+/** 本模块 logger：保留原 `[content/router]` 前缀语义 */
+const log = createLogger('content/router');
 
 // 全局自动扫描开关缓存（来自存储），供增量观察函数使用
 let autoScanEnabledGlobal = false;
 
 // 录制状态缓存
-interface ActiveRecording { 
-  recorder: MediaRecorder; 
-  mode: 'video'|'audio'; 
-  startedAt: number; 
-  chunks: BlobPart[]; 
+/** 一个进行中的录制会话（按视频元素索引区分，支持多视频分别录制） */
+interface ActiveRecording {
+  /** MediaRecorder 实例 */
+  recorder: MediaRecorder;
+  /** 录制模式：video=录视频（含音轨）；audio=仅录音 */
+  mode: 'video'|'audio';
+  /** 录制开始时刻（毫秒） */
+  startedAt: number;
+  /** 录制分片缓冲 */
+  chunks: BlobPart[];
+  /** 被录制的视频元素（事件监听解绑用） */
   element: HTMLVideoElement;
+  /** 已挂接的事件监听（停止时统一解绑，防泄漏） */
   listeners: Record<string, EventListener>;
+  /** 历次暂停累计毫秒（视频暂停 → recorder.pause 区间不计入时长） */
+  accumulatedPauseMs: number;
+  /** 本次暂停开始时刻（0=当前未暂停） */
+  pausedAt: number;
 }
 const activeRecordings: Record<number, ActiveRecording> = {};
+
+/** 录制产物交接分块大小：512KB 原始数据（base64 后约 683KB/条，消息通道安全范围） */
+const RECORDING_CHUNK_BYTES = 512 * 1024;
+
+/**
+ * ArrayBuffer → base64 字符串（分片 btoa，避免大缓冲一次性 fromCharCode 栈溢出）。
+ * @param buf 原始二进制
+ * @returns base64 编码字符串
+ */
+function arrayBufferToBase64(buf: ArrayBuffer): string {
+  const bytes = new Uint8Array(buf);
+  let binary = '';
+  /** 单次 fromCharCode 的切片上限（32K 字符，经验安全值） */
+  const SLICE = 0x8000;
+  for (let i = 0; i < bytes.length; i += SLICE) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + SLICE));
+  }
+  return btoa(binary);
+}
+
+/**
+ * 录制产物兜底下载：内容脚本本地直接触发 webm 下载。
+ * 仅在"交接后台"失败时使用（保证产物不丢；webm 兼容性差的问题由侧栏转码链路解决）。
+ * 注：与 core/mediaConvert.triggerBlobDownload 同构——内容脚本是独立构建产物，
+ * 不引入 mediaConvert（避免把 mp4-muxer/WebCodecs 依赖打进内容脚本包）。
+ * @param blob 录制产物
+ * @param fileName 文件名（含扩展名）
+ */
+function legacyDownloadBlob(blob: Blob, fileName: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  log.info('兜底下载已触发：', fileName);
+  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 4000);
+}
+
+/**
+ * 把录制产物分块交接给后台（base64 分块 → CAPTURE_RECORDING_CHUNK × N → DONE）。
+ * 后台拼装后持久化到 IndexedDB，侧栏"录制成果"列表提供查看/转 MP4、M4A 下载，
+ * 解决 webm 在 Windows 默认播放器"下载后播放不了"的问题。
+ * @param blob 录制产物
+ * @param meta 产物元数据（随首块上送）
+ * @returns true=交接成功；false=失败（调用方回退本地 webm 下载）
+ */
+async function handoffRecordingBlob(blob: Blob, meta: CaptureRecordingMeta): Promise<boolean> {
+  try {
+    const buf = await blob.arrayBuffer();
+    /** 分块总数（空产物也至少 1 块，保证协议完整） */
+    const total = Math.max(1, Math.ceil(buf.byteLength / RECORDING_CHUNK_BYTES));
+    for (let seq = 0; seq < total; seq++) {
+      const slice = buf.slice(seq * RECORDING_CHUNK_BYTES, (seq + 1) * RECORDING_CHUNK_BYTES);
+      const resp = await new Promise<{ success?: boolean } | undefined>((resolve) => {
+        try {
+          chrome.runtime.sendMessage({
+            type: MessageType.CAPTURE_RECORDING_CHUNK,
+            recordId: meta.id,
+            seq,
+            total,
+            data: arrayBufferToBase64(slice),
+            // 元数据仅首块携带，减少后续分块的消息体积
+            meta: seq === 0 ? meta : undefined,
+          }, (r: unknown) => { void chrome.runtime.lastError; resolve(r as { success?: boolean } | undefined); });
+        } catch { resolve(undefined); }
+      });
+      if (!resp || resp.success === false) {
+        log.warn('录制分块上送失败，回退本地下载', seq, resp);
+        return false;
+      }
+    }
+    const done = await new Promise<{ success?: boolean } | undefined>((resolve) => {
+      try {
+        chrome.runtime.sendMessage({ type: MessageType.CAPTURE_RECORDING_DONE, recordId: meta.id },
+          (r: unknown) => { void chrome.runtime.lastError; resolve(r as { success?: boolean } | undefined); });
+      } catch { resolve(undefined); }
+    });
+    return !!(done && done.success);
+  } catch (e) {
+    log.warn('录制产物交接异常，回退本地下载', e);
+    return false;
+  }
+}
 
 // 本内容脚本所在的 frameId（0 = 顶层窗口）；初始化时通过 WHO_AM_I 向后台查询一次
 let selfFrameId = 0;
@@ -65,7 +171,17 @@ export function pickAdapter(loc: Location = window.location): SiteAdapter | null
   return null;
 }
 
+/**
+ * 重复注入守卫。侧栏发现任一 frame 缺少接收端时会按 allFrames 重新注入整包脚本，
+ * 同一隔离世界里二次执行会叠加 onMessage 监听器、pushState 钩子与 MutationObserver。
+ * 标记挂在隔离世界的 window 上：扩展重载后世界重建、标记随之消失，不会挡住重新注入。
+ */
+const INJECTED_FLAG = '__mediaPlusContentInit__';
+
 export function initContentScript() {
+  const world = window as unknown as Record<string, unknown>;
+  if (world[INJECTED_FLAG]) return;
+  world[INJECTED_FLAG] = true;
   // 初始化文本抽取
   initTextExtractor();
   // 查询自身 frameId，用于 RESOURCE_UPDATE 等增量消息标记来源
@@ -82,10 +198,10 @@ export function initContentScript() {
 
   const adapter = pickAdapter();
   if (!adapter) {
-    console.log('[content/router] 未匹配任何站点适配器，启用通用模式');
+    log.info('未匹配任何站点适配器，启用通用模式');
   } else {
     const info = adapter.getPageInfo();
-    console.log('[content/router] 适配器:', adapter.id, info);
+    log.debug('适配器:', adapter.id, info);
   }
   // 延迟扫描：音频列表按请求时再扫描
   let audioList: ReturnType<typeof scanAudioUrls> = [];
@@ -123,6 +239,16 @@ export function initContentScript() {
         }
         break;
       }
+      case MessageType.CURSOR_HIGHLIGHT_TOGGLE: {
+        // 录屏点击/光标高亮覆盖层开关（Round 5 #32）
+        try {
+          toggleCursorHighlight(!!message?.payload?.active);
+          sendResponse({ success: true });
+        } catch (e: unknown) {
+          sendResponse({ success: false, error: (e as Error)?.message || '点击高亮切换失败' });
+        }
+        break;
+      }
       case MessageType.SETTINGS_UPDATE: {
         // 设置变更（如 autoScan 开关）实时同步到内容脚本，无需刷新页面
         try {
@@ -142,7 +268,9 @@ export function initContentScript() {
           const resp: PongMessage = {
             type: MessageType.PONG,
             ok: true,
-            version: '1.0.0',
+            // 版本单一来源（P2-3）：读取运行时清单（构建时由 package.json 注入），
+            // 不再硬编码第三个版本号
+            version: chrome.runtime.getManifest().version,
             capabilities: ['video:list','video:control','image:list','audio:list','playback:status'],
             adapterId: adapter ? adapter.id : null,
             frameId
@@ -155,7 +283,8 @@ export function initContentScript() {
       }
       case MessageType.REQUEST_IMAGE_LIST: {
         try {
-          const list = scanImages();
+          // canvas 抓取改为按需触发（P1-3）：面板显式带 payload.includeCanvas 时才执行
+          const list = scanImages({ includeCanvas: !!(message?.payload?.includeCanvas) });
           sendResponse({ success: true, items: list, frameId: selfFrameId });
         } catch (e: unknown) {
           sendResponse({ success: false, error: (e as Error)?.message || '获取图片失败' });
@@ -197,6 +326,7 @@ export function initContentScript() {
                 break;
               }
             let stream: MediaStream | null = null;
+            let captureError: unknown = null;
             try {
               const vExt = video as HTMLVideoElement & { captureStream?: () => MediaStream; mozCaptureStream?: () => MediaStream };
               if (typeof vExt.captureStream === 'function') {
@@ -204,13 +334,27 @@ export function initContentScript() {
               } else if (typeof vExt.mozCaptureStream === 'function') {
                 stream = vExt.mozCaptureStream();
               }
-            } catch (e) { /* ignore capture errors */ }
+            } catch (e) { captureError = e; }
             if (!stream) {
-              sendResponse({ success: false, error: '浏览器不支持 captureStream' });
+              // SecurityError 是 DRM/跨源限制，与"浏览器不支持"是两回事：
+              // 混为一谈会让用户反复重试一个原理上做不到的操作
+              const name = (captureError as { name?: string } | null)?.name;
+              const detail = (captureError as { message?: string } | null)?.message;
+              const error = name === 'SecurityError'
+                ? '该视频受 DRM 保护或跨源限制，无法直接采集；请改用「录制」入口的屏幕录制'
+                : captureError
+                  ? `采集视频流失败：${detail || name || '未知错误'}`
+                  : '浏览器不支持 captureStream';
+              sendResponse({ success: false, error });
               break;
             }
             // 音频模式：仅保留音轨
             if (mode === 'audio') {
+              // 静音元素采集出的音轨必然是无声的，提前拦住而不是产出一个静音文件
+              if (video.muted || video.volume === 0) {
+                sendResponse({ success: false, error: '视频当前处于静音状态，提取到的音频会是无声的；请先取消静音并播放后再试' });
+                break;
+              }
               const audioTracks = stream.getAudioTracks();
               if (audioTracks.length === 0) {
                 sendResponse({ success: false, error: '无可用音频轨道' });
@@ -235,15 +379,20 @@ export function initContentScript() {
               chrome.runtime.sendMessage(statusMsg);
             };
             recorder.onstop = () => {
-              console.log('[content/router] Recorder stopped. Chunks:', chunks.length);
+              log.debug('Recorder stopped. Chunks:', chunks.length);
               // Clean up listeners
               const rec = activeRecordings[idx];
               if (rec && rec.listeners) {
                 Object.entries(rec.listeners).forEach(([evt, fn]) => rec.element.removeEventListener(evt, fn));
               }
+              // 停止时若仍处于暂停中，补记最后一段暂停时长
+              let pausedMs = rec ? rec.accumulatedPauseMs : 0;
+              if (rec && rec.pausedAt > 0) pausedMs += Date.now() - rec.pausedAt;
+              /** 实际录制时长（毫秒）：总耗时 - 累计暂停 */
+              const durationMs = Math.max(0, Date.now() - startedAt - pausedMs);
 
               const blob = new Blob(chunks, { type: recorder.mimeType || (mode === 'audio' ? 'audio/webm' : 'video/webm') });
-              console.log('[content/router] Blob size:', blob.size);
+              log.debug('Blob size:', blob.size);
               
               if (blob.size === 0) {
                 const errorMsg = { type: MessageType.VIDEO_RECORDING_STATUS, status: 'error' as const, index: idx, error: '录制数据为空 (Blob size 0)', mode };
@@ -253,26 +402,32 @@ export function initContentScript() {
               }
 
               const fileName = `record_${mode}_${Date.now()}_${idx}.webm`;
-              // 触发下载：使用临时链接
-              try {
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url; a.download = fileName; a.style.display = 'none';
-                document.body.appendChild(a); 
-                a.click(); 
-                console.log('[content/router] Download triggered for', fileName);
-                setTimeout(()=>{ document.body.removeChild(a); URL.revokeObjectURL(url); }, 4000);
-              } catch (e) { 
-                console.error('[content/router] Download trigger failed', e);
-              }
-              const completedMsg = { type: MessageType.VIDEO_RECORDING_STATUS, status: 'completed' as const, index: idx, fileName, mode };
-              chrome.runtime.sendMessage(completedMsg);
-              delete activeRecordings[idx];
+              /** 产物元数据：随首块上送后台，侧栏列表/编辑器/下载命名共用 */
+              const meta: CaptureRecordingMeta = {
+                id: `caprec_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                mode,
+                mimeType: blob.type,
+                fileName,
+                sizeBytes: blob.size,
+                durationMs,
+                createdAt: Date.now(),
+                sourceTitle: document.title || '',
+                sourceUrl: location.href,
+              };
+              // 交接后台（侧栏"录制成果"列表 + 转 MP4/M4A 下载）；失败回退本地 webm 下载。
+              // completed 必须等交接结束再广播：提前广播会让面板显示"已完成"而成果列表还是空的，
+              // 用户以为丢件；期间保留 activeRecordings，避免同一索引的新录制被旧 completed 覆盖状态。
+              void handoffRecordingBlob(blob, meta).then((ok) => {
+                if (!ok) legacyDownloadBlob(blob, fileName);
+                const completedMsg = { type: MessageType.VIDEO_RECORDING_STATUS, status: 'completed' as const, index: idx, fileName, mode };
+                void chrome.runtime.sendMessage(completedMsg).catch(() => { /* 侧栏未开：成果已落库，启动时会读取 */ });
+                delete activeRecordings[idx];
+              });
             };
             recorder.onerror = (e: Event) => {
               const errObj = e as unknown as { error?: { message?: string }; message?: string };
               const errorMsg = { type: MessageType.VIDEO_RECORDING_STATUS, status: 'error' as const, index: idx, error: (errObj?.error?.message || errObj?.message || '录制错误'), mode };
-              chrome.runtime.sendMessage(errorMsg);
+              void chrome.runtime.sendMessage(errorMsg).catch(() => { /* 无接收端 */ });
               delete activeRecordings[idx];
             };
 
@@ -280,23 +435,32 @@ export function initContentScript() {
             const listeners: Record<string, EventListener> = {
               pause: () => {
                 if (recorder.state === 'recording') {
-                  console.log('[content/router] Video paused, pausing recorder');
+                  log.debug('Video paused, pausing recorder');
                   recorder.pause();
+                  // 记录本次暂停起点（时长统计用；防重复事件覆盖已有起点）
+                  const r = activeRecordings[idx];
+                  if (r && r.pausedAt === 0) r.pausedAt = Date.now();
                 }
               },
               play: () => {
                 if (recorder.state === 'paused') {
-                  console.log('[content/router] Video resumed, resuming recorder');
+                  log.debug('Video resumed, resuming recorder');
                   recorder.resume();
+                  // 累计本次暂停时长并复位起点
+                  const r = activeRecordings[idx];
+                  if (r && r.pausedAt > 0) {
+                    r.accumulatedPauseMs += Date.now() - r.pausedAt;
+                    r.pausedAt = 0;
+                  }
                 }
               },
-              ended: () => { console.log('[content/router] Video ended, stopping recorder'); recorder.stop(); },
-              emptied: () => { console.log('[content/router] Video emptied, stopping recorder'); recorder.stop(); },
-              loadstart: () => { console.log('[content/router] Video loadstart (src change), stopping recorder'); recorder.stop(); }
+              ended: () => { log.debug('Video ended, stopping recorder'); recorder.stop(); },
+              emptied: () => { log.debug('Video emptied, stopping recorder'); recorder.stop(); },
+              loadstart: () => { log.debug('Video loadstart (src change), stopping recorder'); recorder.stop(); }
             };
             Object.entries(listeners).forEach(([evt, fn]) => video.addEventListener(evt, fn));
 
-            activeRecordings[idx] = { recorder, mode, startedAt, chunks, element: video, listeners };
+            activeRecordings[idx] = { recorder, mode, startedAt, chunks, element: video, listeners, accumulatedPauseMs: 0, pausedAt: 0 };
             recorder.start();
             sendResponse({ success: true, startedAt });
           } catch (e: unknown) {
@@ -309,6 +473,8 @@ export function initContentScript() {
             const idx: number = typeof message?.index === 'number' ? message.index : 0;
             const rec = activeRecordings[idx];
             if (!rec) { sendResponse({ success: false, error: '未在录制' }); break; }
+            // 已停止但产物仍在交接：条目会保留到保存完成，重复点击停止按幂等处理
+            if (rec.recorder.state === 'inactive') { sendResponse({ success: true }); break; }
             rec.recorder.stop();
             sendResponse({ success: true });
           } catch (e: unknown) {
@@ -320,27 +486,34 @@ export function initContentScript() {
       case MessageType.REQUEST_VIDEO_SOURCES: {
         try {
           const idx: number = typeof message?.index === 'number' ? message.index : 0;
-          const list = getVideoSourceCandidatesByIndex(idx);
-          sendResponse({ success: true, sources: list });
+          const video = getVideoElementByIndex(idx);
+          if (!video) {
+            // 元素已不在 DOM：明确失败，让侧栏提示重扫，而不是拿别的视频直链顶上
+            sendResponse({ success: false, error: '未找到该视频元素（页面可能已变化），请重新扫描后再试' });
+            break;
+          }
+          sendResponse({ success: true, sources: collectVideoSourceCandidates(video) });
         } catch (e: unknown) {
           sendResponse({ success: false, error: (e as Error)?.message || '获取直链失败' });
         }
         break;
       }
-      // 便捷控制（兼容旧消息）
-      case 'PLAY_VIDEO': {
-        const v = getVideoElementByIndex(0);
+      // 便捷控制（兼容旧消息：@deprecated 类型仅保留接收，字符串值不可变，见 messaging/index.ts）
+      // 这两条旧消息的语义就是「整页第一个视频」，与稳定索引无关，故显式取首个而非走索引
+      case MessageType.PLAY_VIDEO: {
+        const v = deepQuerySelectorAll<HTMLVideoElement>('video')[0] ?? null;
         v?.play?.();
         sendResponse({ success: !!v });
         break;
       }
-      case 'PAUSE_VIDEO': {
-        const v = getVideoElementByIndex(0);
+      case MessageType.PAUSE_VIDEO: {
+        const v = deepQuerySelectorAll<HTMLVideoElement>('video')[0] ?? null;
         v?.pause?.();
         sendResponse({ success: !!v });
         break;
       }
-      case 'SCAN_PAGE_SOURCES': {
+      // 旧版整页资源扫描（@deprecated：当前无发送方，保留接收兼容外部旧调用）
+      case MessageType.SCAN_PAGE_SOURCES: {
         try {
           const files = scanPageSources();
           sendResponse({ success: true, files });
@@ -372,12 +545,24 @@ let baseAudioUrls = new Set<string>();
 // Map<index, src> to detect content changes even if element ID is reused
 const baseVideoState = new Map<number, string>();
 
-function flushAggregated(features: Record<string, boolean>) {
+/**
+ * 节流窗口内最近一次扫描的完整快照（P1-3 治理点）。
+ * 旧实现 aggregateDiff 与 flushAggregated 各自全量重扫一遍，
+ * diff 算了两遍且 flush 还要再扫一次；现在每次触发只扫一次，
+ * flush 直接复用最后一次快照（新鲜度与旧实现一致——都等于最后一次触发扫描）。
+ */
+let pendingSnapshot: { images?: ImageScanItem[]; audio?: AudioItem[]; videos?: VideoItemDTO[] } = {};
+
+/**
+ * 节流窗口到期时发送聚合结果：
+ * 使用 aggregateDiff 已扫描并暂存的快照更新基准集合，不再二次全量扫描。
+ * 为兼容旧客户端，仍随 diff 一并携带全量列表字段。
+ */
+function flushAggregated() {
   aggTimer = null;
-  // 最终一次重新扫描用于最新完整列表（降低 UI 不一致风险）
-  const finalImages = features.image ? scanImages() : undefined;
-  const finalAudio = features.audio ? scanAudioUrls() : undefined;
-  const finalVideos = features.video ? scanVideoElements() : undefined;
+  const finalImages = pendingSnapshot.images;
+  const finalAudio = pendingSnapshot.audio;
+  const finalVideos = pendingSnapshot.videos;
   // 更新基准集合
   if (finalImages) baseImageKeys = new Set(finalImages.map(i => buildImageKeyDiff(i)));
   if (finalAudio) baseAudioUrls = new Set(finalAudio.map(a => a.url));
@@ -404,16 +589,23 @@ function flushAggregated(features: Record<string, boolean>) {
     payload.frameId = selfFrameId;
     try { chrome.runtime.sendMessage({ type: MessageType.RESOURCE_UPDATE, payload }); } catch { /* noop */ }
   }
-  // 清空聚合状态
+  // 清空聚合状态与快照
   aggImagesAdded.clear(); aggImagesRemoved.clear();
   aggAudioAdded.clear(); aggAudioRemoved.clear();
   aggVideoAdded.clear(); aggVideoRemoved.clear();
+  pendingSnapshot = {};
 }
 
+/**
+ * 触发一次增量检测：按启用的特性各扫描一遍（每个节流窗口内每次事件仅扫描一次），
+ * 计算与基准集合的 diff 并累积到聚合状态，同时刷新快照供 flush 复用。
+ * @param features 当前启用的特性开关集合
+ */
 function aggregateDiff(features: Record<string, boolean>) {
   try {
     if (features.image) {
       const imgs = scanImages();
+      pendingSnapshot.images = imgs; // 刷新快照（flush 时直接复用，避免二次全量扫描）
       const currentKeys = new Set(imgs.map(i => buildImageKeyDiff(i)));
       // 新增
       imgs.forEach(i => { const k = buildImageKeyDiff(i); if (!baseImageKeys.has(k)) aggImagesAdded.set(k, i); });
@@ -422,25 +614,27 @@ function aggregateDiff(features: Record<string, boolean>) {
     }
     if (features.audio) {
       const aud = scanAudioUrls();
+      pendingSnapshot.audio = aud;
       const currentUrls = new Set(aud.map(a => a.url));
       aud.forEach(a => { if (!baseAudioUrls.has(a.url)) aggAudioAdded.set(a.url, a); });
       baseAudioUrls.forEach(u => { if (!currentUrls.has(u)) aggAudioRemoved.add(u); });
     }
     if (features.video) {
       const vids = scanVideoElements();
+      pendingSnapshot.videos = vids;
       const currentIds = new Set(vids.map(v => v.index));
-      vids.forEach(v => { 
+      vids.forEach(v => {
         const oldSrc = baseVideoState.get(v.index);
         // Detect new ID OR reused ID with changed src
         if (!baseVideoState.has(v.index) || oldSrc !== v.src) {
-          aggVideoAdded.set(v.index, v); 
+          aggVideoAdded.set(v.index, v);
         }
       });
       baseVideoState.forEach((_, id) => { if (!currentIds.has(id)) aggVideoRemoved.add(id); });
     }
   } catch { /* noop */ }
   if (!aggTimer) {
-    aggTimer = (setTimeout(() => flushAggregated(features), 350) as unknown) as number; // 350ms 节流窗口
+    aggTimer = (setTimeout(() => flushAggregated(), 350) as unknown) as number; // 350ms 节流窗口
   }
 }
 
@@ -491,20 +685,12 @@ function tryInstallDynamicWatchers(features: Record<string, boolean>) {
       playCaptureListenerInstalled = true;
       document.addEventListener('play', (e) => {        const target = e.target as HTMLVideoElement;
         if (target && target.tagName === 'VIDEO') {
-          // 1. Stop recordings of OTHER videos (Video Switch logic)
-          Object.keys(activeRecordings).forEach(k => {
-            const idx = Number(k);
-            const rec = activeRecordings[idx];
-            if (rec && rec.element !== target) {
-              console.log('[content/router] New video playing, stopping other recording:', idx);
-              rec.recorder.stop();
-            }
-          });
-
+          // 不在此停掉其他元素的录制：各录制已挂元素级 loadstart/emptied 监听处理"自身换源"，
+          // 全局停他会把批量录制杀到只剩最后一个在录。
           const id = stableVideoIdMap.get(target);
           // If unknown video OR known video with changed src
           if (id === undefined || (baseVideoState.has(id) && baseVideoState.get(id) !== (target.currentSrc || target.src || ''))) {
-            console.debug('[content/router] Detected untracked video playing, triggering scan');
+            log.debug('Detected untracked video playing, triggering scan');
             aggregateDiff(features);
           }
         }
@@ -519,7 +705,7 @@ function stopAllRecordings(reason: string) {
     const idx = Number(k);
     const rec = activeRecordings[idx];
     if (rec && rec.recorder.state !== 'inactive') {
-      console.log(`[content/router] Stopping recording ${idx} due to ${reason}`);
+      log.debug(`Stopping recording ${idx} due to ${reason}`);
       rec.recorder.stop();
     }
   });
@@ -578,7 +764,7 @@ function scanVideoElements(): VideoItemDTO[] {
       ensurePlaybackListener(v, stableId);
     });
   } catch (e) {
-    console.warn('[content/router] 扫描视频失败:', e);
+    log.warn('扫描视频失败:', e);
   }
   return list;
 }
@@ -607,14 +793,14 @@ function attachVideoPlaybackListeners() {
   });
 }
 
-function getVideoElementByIndex(index?: number): HTMLVideoElement | null {
-  if (typeof index === 'number') {
-    const direct = reverseVideoMap[index];
-    if (direct) return direct;
-  }
-  // 回退：返回当前页面第一个视频
-  const videos = deepQuerySelectorAll<HTMLVideoElement>('video');
-  return videos.length ? videos[0] : null;
+/**
+ * 按稳定索引取视频元素；查不到就返回 null。
+ * 绝不回退到「页面第一个视频」：反向索引每次扫描后会修剪掉已不在 DOM 的元素
+ * （SPA 导航、懒卸载），此时静默换成 videos[0] 会让用户点第 3 个卡片却下载/控制第 1 个视频，
+ * 而且全程无报错——错误目标比明确失败危险得多。
+ */
+function getVideoElementByIndex(index: number): HTMLVideoElement | null {
+  return reverseVideoMap[index] ?? null;
 }
 
 async function controlVideoByIndex(index: number, action: VideoControlAction): Promise<boolean> {
@@ -664,10 +850,6 @@ function collectVideoSourceCandidates(video: HTMLVideoElement | null): VideoSour
   return results;
 }
 
-function getVideoSourceCandidatesByIndex(index?: number): VideoSourceCandidate[] {
-  return collectVideoSourceCandidates(getVideoElementByIndex(index));
-}
-
 function normalizeHttpUrl(u: string): string | '' {
   const trimmed = (u || '').trim();
   if (!trimmed) return '';
@@ -683,28 +865,13 @@ function normalizeHttpUrl(u: string): string | '' {
   }
 }
 
-// ============== 深度查询（包含 Shadow DOM） ==============
-function deepQuerySelectorAll<T extends Element>(selector: string, root: Document | ShadowRoot = document): T[] {
-  const out: T[] = [];
-  const queue: (Document | ShadowRoot)[] = [root];
-  while (queue.length) {
-    const current = queue.shift()!;
-    current.querySelectorAll<T>(selector).forEach((el) => out.push(el));
-    current.querySelectorAll<Element>('*').forEach((el) => {
-      const typed = el as Element & { shadowRoot?: ShadowRoot | null };
-      if (typed.shadowRoot) queue.push(typed.shadowRoot);
-    });
-  }
-  return out;
-}
-
 // ============== SPA 导航与动态内容监听（带去抖） ==============
 // 移除全局 flag 检查，允许重载后重新挂载监听器（History API 钩子会叠加，但这是开发模式下的妥协）
 let debouncedTimer: number | null = null;
 function installResiliencyWatchers(onChange: () => void) {
   const schedule = (reason: string) => {
     try { if (debouncedTimer) clearTimeout(debouncedTimer); } catch (e) { void 0; }
-    try { console.debug('[content/router] 计划重扫:', reason); } catch (e) { void 0; }
+    try { log.debug('计划重扫:', reason); } catch (e) { void 0; }
     debouncedTimer = (setTimeout(() => {
       debouncedTimer = null;
       try { onChange(); } catch (e) { void 0; }
@@ -750,10 +917,10 @@ function installResiliencyWatchers(onChange: () => void) {
  * 聚合当前页面的启用类别资源并进行差异检测。
  * 仅当与上一次发送相比检测到新增/移除资源时返回 changed=true。
  * 差异依据：
- *  - 图片：url + 尺寸 + kind 组成的复合 key
+ *  - 图片：与侧栏同源的统一 key（kind + 规范化 url + 尺寸）
  *  - 音频：绝对 url
  *  - 视频：稳定 index (WeakMap 分配)
  */
 // 旧 gatherResources 与增量 diff 逻辑已被批处理聚合取代，仅保留差异 key 构造与类型供聚合使用
 interface ResourceDiff { images?: { added: ImageScanItem[]; removed: string[] }; audio?: { added: AudioItem[]; removed: string[] }; videos?: { added: VideoItemDTO[]; removed: number[] }; }
-function buildImageKeyDiff(i: ImageScanItem): string { return `${i.url}#${i.width}x${i.height}#${i.kind}`; }
+function buildImageKeyDiff(i: ImageScanItem): string { return buildUnifiedMediaKey(i); }

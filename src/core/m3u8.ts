@@ -39,6 +39,12 @@ export interface M3u8ParseResult {
   segments?: M3u8Segment[];
   /** EXT-X-MAP 的 URI（fMP4 初始化段） */
   initSegment?: string;
+  /**
+   * EXT-X-MAP 的 BYTERANGE 属性（初始化段只取文件的一部分时使用）。
+   * 跨会话交接项（收口轮）：此前该字段由 background/hls.ts 用正则从清单原文兜底提取，
+   * 现由解析器统一透出，hls.ts 直接读取本字段。
+   */
+  initByterange?: M3u8Byterange;
   /** 当前清单生效的加密信息（v1：单 key 假设，多 key 场景取首个非 NONE key） */
   keyInfo?: M3u8KeyInfo;
   mediaSequence?: number;
@@ -70,6 +76,19 @@ function resolveUri(uri: string, baseUrl: string): string {
   } catch {
     return uri;
   }
+}
+
+/**
+ * 解析 BYTERANGE 语法 `<length>[@<offset>]`（EXT-X-BYTERANGE 与 EXT-X-MAP 共用）。
+ * @param spec BYTERANGE 属性原始值（如 "735@0"）
+ * @returns 解析结果；length 非法（非有限正数）时返回 undefined
+ */
+function parseByterangeSpec(spec: string): M3u8Byterange | undefined {
+  const [lenStr, offStr] = spec.split('@');
+  const length = Number(lenStr);
+  if (!Number.isFinite(length) || length <= 0) return undefined;
+  const offset = offStr != null && offStr !== '' ? Number(offStr) : undefined;
+  return { length, offset: typeof offset === 'number' && Number.isFinite(offset) ? offset : undefined };
 }
 
 export function parseM3U8(text: string, baseUrl: string): M3u8ParseResult {
@@ -132,6 +151,8 @@ export function parseM3U8(text: string, baseUrl: string): M3u8ParseResult {
     if (line.startsWith('#EXT-X-MAP')) {
       const attrs = parseAttrs(line.slice(line.indexOf(':') + 1));
       if (attrs.URI) result.initSegment = resolveUri(attrs.URI, baseUrl);
+      // 交接项：透出 EXT-X-MAP 的 BYTERANGE（初始化段按字节范围取回时使用）
+      if (attrs.BYTERANGE) result.initByterange = parseByterangeSpec(attrs.BYTERANGE);
       continue;
     }
     if (line.startsWith('#EXT-X-BYTERANGE')) {

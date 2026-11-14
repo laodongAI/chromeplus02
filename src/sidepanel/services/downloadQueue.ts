@@ -8,6 +8,8 @@ export interface DownloadTask {
   url: string;
   fileName?: string;
   kind: 'image' | 'audio' | 'video';
+  /** 下载引擎：后台快照携带，用于「进行中/近期任务」区分 HLS 与直链 */
+  engine?: 'direct' | 'hls';
   messageType?: MessageType | string; // allow legacy
   status: 'pending' | 'running' | 'paused' | 'completed' | 'error' | 'canceled';
   error?: string;
@@ -65,17 +67,31 @@ export async function retryFailedAllDownloads(){
   await sendRuntimeMessage({ type: MessageType.DOWNLOAD_QUEUE_ACTION, action: 'retry_failed_all' });
 }
 
+/**
+ * 判断下载队列是否已全部落定（UI 第一批 · 评审 P1：全局下载条收尾用）。
+ * "落定"指不存在 pending/running/paused 的进行中任务，全部处于
+ * completed/error/canceled 终态；空队列视为未落定（此时下载条本身隐藏）。
+ * 纯函数、无副作用，便于单测与组件按状态决定"可关闭/可跳转"。
+ * @param tasks 当前队列快照
+ */
+export function isQueueSettled(tasks: DownloadTask[]): boolean {
+  if (tasks.length === 0) return false;
+  return tasks.every(t => t.status === 'completed' || t.status === 'error' || t.status === 'canceled');
+}
+
 // 旧本地并发逻辑移除，统一由后台队列调度。
 
-interface SnapshotTaskShape { id: string; url: string; fileName?: string; kind?: string; status: string; progress?: number; error?: string; errorCode?: string; downloadId?: number; bytesReceived?: number; totalBytes?: number; speedBps?: number; etaSeconds?: number; retries?: number; }
+interface SnapshotTaskShape { id: string; url: string; fileName?: string; kind?: string; engine?: 'direct' | 'hls'; status: string; progress?: number; error?: string; errorCode?: string; downloadId?: number; bytesReceived?: number; totalBytes?: number; speedBps?: number; etaSeconds?: number; retries?: number; }
 function applySnapshot(tasks: SnapshotTaskShape[]) {
   const map = new Map<string, DownloadTask>();
   queue.forEach(t => map.set(t.id, t));
   tasks.forEach(src => {
     const existing = map.get(src.id);
     if (existing) {
-      const wasCompleted = existing.status === 'completed';
+      // 记录覆盖前的状态，用于"仅在状态真正跃迁时写历史"（旧逻辑对 error 任务每次快照都重复写历史）
+      const prevStatus = existing.status;
       existing.status = src.status as DownloadTask['status'];
+      existing.engine = src.engine ?? existing.engine;
       existing.progress = src.progress;
       existing.error = src.error;
       existing.errorCode = src.errorCode || existing.errorCode;
@@ -85,8 +101,10 @@ function applySnapshot(tasks: SnapshotTaskShape[]) {
       existing.speedBps = src.speedBps;
       existing.etaSeconds = src.etaSeconds;
       existing.retries = src.retries ?? existing.retries;
-      
-      if (!wasCompleted && existing.status === 'completed') {
+
+      // 历史只由"非终态 → 终态"的跃迁触发；error 任务在后续快照中反复出现不再重复记录
+      // （downloadHistory 内部另有同 ID 同内容的去重兜底）
+      if (prevStatus !== 'completed' && existing.status === 'completed') {
         addHistoryRecord({
           id: existing.id,
           url: existing.url,
@@ -95,7 +113,7 @@ function applySnapshot(tasks: SnapshotTaskShape[]) {
           status: 'success',
           size: existing.totalBytes
         });
-      } else if (existing.status === 'error' && existing.error) {
+      } else if (prevStatus !== 'error' && existing.status === 'error' && existing.error) {
         addHistoryRecord({
           id: existing.id,
           url: existing.url,
@@ -107,7 +125,7 @@ function applySnapshot(tasks: SnapshotTaskShape[]) {
         });
       }
     } else {
-      const newTask: DownloadTask = { id: src.id, url: src.url, fileName: src.fileName, kind: (src.kind as DownloadTask['kind']) || 'image', messageType: undefined, retries: src.retries ?? 0, status: src.status as DownloadTask['status'], progress: src.progress, error: src.error, errorCode: src.errorCode };
+      const newTask: DownloadTask = { id: src.id, url: src.url, fileName: src.fileName, kind: (src.kind as DownloadTask['kind']) || 'image', engine: src.engine, messageType: undefined, retries: src.retries ?? 0, status: src.status as DownloadTask['status'], progress: src.progress, error: src.error, errorCode: src.errorCode };
       queue.push(newTask);
       if (newTask.status === 'completed') {
         addHistoryRecord({
@@ -179,6 +197,9 @@ function ensureRuntimeProgressListener(){
       const evt = message as DownloadProgressEventMessage;
       const t = queue.find(q => q.id === evt.id);
       if (t) {
+        // 进度事件只驱动局部数值更新（后台已按任务节流）。
+        // 状态跃迁与历史记录统一由全量快照驱动（后台仅在结构性变化时发快照），
+        // 避免"进度事件先置终态 → 快照跃迁判定失效 → 历史漏记/重复"的双路径竞争。
         t.progress = evt.progress ?? t.progress;
         t.bytesReceived = evt.bytesReceived ?? t.bytesReceived;
         t.totalBytes = evt.totalBytes ?? t.totalBytes;
@@ -188,10 +209,6 @@ function ensureRuntimeProgressListener(){
         if (evt.state) t.state = evt.state;
         if (evt.error) t.error = evt.error;
         if (evt.errorCode) t.errorCode = evt.errorCode;
-        if (evt.finished && t.status !== 'completed') {
-          if (evt.error) t.status = 'error';
-          else if (t.status !== 'canceled') t.status = 'completed';
-        }
       }
       emitUpdate();
     } else if (message.type === MessageType.DOWNLOAD_QUEUE_SNAPSHOT) {

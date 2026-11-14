@@ -1,6 +1,6 @@
 import { inject, provide, reactive } from 'vue';
 
-export type ResourceTabKey = 'video' | 'image' | 'audio' | 'text' | 'downloads' | 'sources' | 'settings' | 'basket' | 'screenrec' | 'sites';
+export type ResourceTabKey = 'video' | 'image' | 'audio' | 'text' | 'network' | 'downloads' | 'sources' | 'settings' | 'basket' | 'screenrec' | 'sites';
 
 export interface ResourceCountsContext {
   counts: Record<ResourceTabKey, number>;
@@ -15,6 +15,8 @@ export function provideResourceCounts() {
     image: 0,
     audio: 0,
     text: 0,
+    // 接口面板：当前标签页捕获到的接口条数
+    network: 0,
     downloads: 0,
     sources: 0,
     settings: 0,

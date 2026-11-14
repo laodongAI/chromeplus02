@@ -1,14 +1,17 @@
 <template>
-  <BaseCard title="音频抓取" subtitle="识别音频资源并补充时长/大小元数据" :padded="true">
+  <!-- UI 三批（组6）：标题改引用 terminology 常量 PANEL_TITLES.audio，与分段 tab 文案三处同源 -->
+  <BaseCard :title="PANEL_TITLES.audio" subtitle="识别音频资源并补充时长/大小元数据" :padded="true">
     <div class="toolbar">
       <div class="toolbar__left">
         <BaseButton size="sm" variant="secondary" :loading="loading" @click="refreshAudioList">
           重新扫描
         </BaseButton>
-        <BaseButton size="sm" variant="ghost" :loading="ensureBusy" :disabled="loading" @click="ensureConnectAndRefresh">
-          重试连接
-        </BaseButton>
-        <BaseButton size="sm" variant="ghost" @click="handleSelectAll(!allSelected)" :disabled="items.length === 0">
+        <!-- 评审（UI 二批之一）问题 6：原"重试连接"为开发者术语，改为"修复扫描"并说明预期 -->
+        <BaseButton size="sm" variant="ghost" :loading="ensureBusy" :disabled="loading" @click="ensureConnectAndRefresh"
+          title="页面无响应或扫描无结果时，重新注入页面脚本并再次扫描">修复扫描</BaseButton>
+        <!-- Round 5 #29：嗅探之外的两条候选找回路径（回收后自动重扫列表） -->
+        <MediaSweepControls @done="refreshAudioList" />
+        <BaseButton size="sm" variant="ghost" @click="handleSelectAll(!allSelected)" :disabled="!displayAudioItems.length">
           {{ allSelected ? '取消全选' : '全选' }}
         </BaseButton>
         <select class="sp-select" v-model="filterDownloadStatus" @change="applyAudioFilter" :disabled="loading">
@@ -37,19 +40,33 @@
       </div>
     </div>
 
+    <!-- 评审（UI 二批之一）问题 3：重复筛选补动作（与图片面板同一交互习惯；UI 三批组6 术语同步） -->
+    <div class="filter-bar">
+      <label class="dup-toggle" title="隐藏 URL+大小重复的冗余副本，每组保留第一条">
+        <input type="checkbox" v-model="hideDuplicates" />隐藏重复
+      </label>
+      <!-- Round 5 #28：属性表达式，覆盖「只看 50MB 以上的 mp3」这类两个下拉表达不了的组合 -->
+      <ExprFilterInput
+        v-model="filterExpr"
+        :error="filterExprError"
+        placeholder="表达式：size>10MB format=mp3"
+        label="音频属性过滤表达式"
+      />
+      <BaseButton size="sm" variant="ghost" :disabled="!duplicateSet.size" @click="selectDuplicates">选中重复项</BaseButton>
+      <BaseButton size="sm" variant="ghost" :disabled="!duplicateSet.size" @click="deselectDuplicates">取消选中重复</BaseButton>
+      <BaseButton size="sm" variant="ghost" @click="resetFilter">重置</BaseButton>
+    </div>
+
     <!-- 下载队列展示 -->
 
 
-    <div class="restricted-banner" v-if="restrictedHint">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="banner-icon"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-      <span class="banner-text">{{ restrictedHint }}<em class="banner-hint">请切换到普通网页后再试。</em></span>
-      <button class="banner-close" @click="restrictedHint = null" title="关闭提示">
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      </button>
-    </div>
+    <!-- UI 三批（组1）：受限横幅收敛到共享组件 RestrictedBanner（warning 语义唯一实现），
+         删除本面板复制版 .restricted-banner/.banner-* 样式与内联 svg；
+         close 事件仅清空本面板 restrictedHint 状态，受限检测业务逻辑零改动 -->
+    <RestrictedBanner v-if="restrictedHint" :message="restrictedHint" @close="restrictedHint = null" />
 
     <SelectionTable
-      :items="displayAudioItems"
+      :items="pagedAudioItems"
       :selected="selected"
       row-key="url"
       :dense="true"
@@ -61,6 +78,7 @@
       <template #toolbar>
         <div class="table-status">
           <span>已识别 {{ items.length }} 条音频</span>
+          <span v-if="displayAudioItems.length !== items.length" class="status">过滤后 {{ displayAudioItems.length }} 条</span>
           <span v-if="error && !restrictedHint" class="status status--error">{{ error }}</span>
           <span v-else-if="loading" class="status">扫描中…</span>
           <span v-else-if="lastAction" class="status">{{ lastAction }}</span>
@@ -74,56 +92,100 @@
           :show-hint="showShortcutHints"
         />
       </template>
+      <!-- 评审（UI 二批之一）问题 1：7 列（标题/链接/时长/大小/状态/重复/操作，合计约 510px+）
+           在 300-400px 侧栏必然横向滚动。砍到 2 个数据列：
+           "音频"列常驻标题+来源+时长/大小/状态/重复徽标（原独立列全部内联），
+           URL 折叠进"⋯"详情；"操作"列保留下载与展开入口 -->
       <template #header>
-        <th>标题</th>
-        <th>链接</th>
-        <th style="width: 90px;">时长</th>
-        <th style="width: 110px;">大小</th>
-        <th style="width: 80px;">状态</th>
-        <th style="width: 70px;">重复</th>
-        <th style="width: 160px;">操作</th>
+        <th>音频</th>
+        <th style="width: 84px;">操作</th>
       </template>
-      <template #empty>未在当前页面检测到音频资源</template>
+      <template #empty>
+        <div class="empty-catalog-hint">
+          <span>未在当前页面检测到音频资源</span>
+          <!-- UI 二批之二：网站目录不再是独立 tab，空状态提供入口链接（选站打开后回到视频子模式扫描） -->
+          <button type="button" class="catalog-entry" @click="$emit('open-site-catalog')">从网站目录选择站点打开 →</button>
+        </div>
+      </template>
       <template #row="{ item }">
         <td>
           <div class="title">{{ item.title || '未命名音频' }}</div>
-          <div class="subtitle">{{ extractHost(item.url) }}</div>
-        </td>
-        <td class="url-cell">
-          <a :href="item.url" target="_blank" rel="noreferrer">{{ item.url }}</a>
-        </td>
-        <td>{{ formatDuration(metaMap[item.url]?.duration) }}</td>
-        <td>{{ formatSize(metaMap[item.url]?.contentLength) }}</td>
-        <td>
-          <span v-if="isDownloaded(item.url)" class="chip chip--success">已下载</span>
-          <span v-else class="chip chip--ghost">未下载</span>
-        </td>
-        <td>
-          <span v-if="duplicateSet.has(item.url)" class="dup-badge" title="URL+大小重复">重复</span>
+          <div class="item-meta">
+            <span class="subtitle">{{ extractHost(item.url) }}</span>
+            <BaseTag v-if="formatOf(item)" size="sm" variant="neutral">{{ formatOf(item) }}</BaseTag>
+            <span>{{ formatDuration(metaMap[item.url]?.duration) }}</span>
+            <span>{{ formatSize(metaMap[item.url]?.contentLength ?? item.size) }}</span>
+            <!-- UI 三批（组1/组2）：状态徽标改用共享组件 BaseTag（size=sm，12px 紧凑形态），
+                 删除本地 .chip/.chip--*/.dup-badge 复制样式；「重复」统一为 warning 语义，
+                 原图像无边框/音频有边框的分叉就此消除 -->
+            <BaseTag v-if="isDownloaded(item.url)" size="sm" variant="success">已下载</BaseTag>
+            <BaseTag v-else size="sm" variant="neutral">未下载</BaseTag>
+            <BaseTag v-if="duplicateSet.has(item.url)" size="sm" variant="warning" title="URL+大小重复">重复</BaseTag>
+          </div>
+          <!-- "⋯"展开的详情区：完整地址 + 复制（原"链接"常驻列折叠于此） -->
+          <div v-if="expandedUrl === item.url" class="row-detail">
+            <a class="detail-url" :href="item.url" target="_blank" rel="noreferrer">{{ item.url }}</a>
+            <BaseButton size="sm" variant="ghost" @click="copyLink(item.url)">复制链接</BaseButton>
+          </div>
         </td>
         <td>
           <div class="row-actions">
-            <BaseButton size="sm" variant="secondary" @click="copyLink(item.url)">
-              复制链接
-            </BaseButton>
             <BaseButton size="sm" :loading="downloadingUrls.has(item.url)" @click="downloadSingle(item)">
               下载
             </BaseButton>
+            <BaseButton
+              size="sm"
+              variant="ghost"
+              :title="expandedUrl === item.url ? '收起详情' : '查看详情（地址）'"
+              :aria-expanded="expandedUrl === item.url"
+              @click="toggleExpandUrl(item.url)"
+            >⋯</BaseButton>
           </div>
         </td>
       </template>
+      <!-- 评审（UI 二批之一）问题 2：对齐图片面板的分页方案（分页比虚拟化实现更稳、
+           且与图片保持同一交互习惯），上百条时只渲染当前页（UI 三批组6 术语同步） -->
+      <template #footer>
+        <div class="pager" v-if="displayAudioItems.length > PAGE_SIZE">
+          <BaseButton size="sm" variant="ghost" :disabled="page <= 1" @click="page = 1">首页</BaseButton>
+          <BaseButton size="sm" variant="ghost" :disabled="page <= 1" @click="page--">上一页</BaseButton>
+          <span class="pager__info">第 {{ page }} / {{ totalPages }} 页 · 共 {{ displayAudioItems.length }} 条</span>
+          <BaseButton size="sm" variant="ghost" :disabled="page >= totalPages" @click="page++">下一页</BaseButton>
+          <BaseButton size="sm" variant="ghost" :disabled="page >= totalPages" @click="page = totalPages">末页</BaseButton>
+        </div>
+      </template>
     </SelectionTable>
+
+    <!-- 录制成果：录音完成后交接后台落库，这里提供试听/下载 M4A/删除；
+         修复「录音下载后打不开（webm 兼容差）、录完无处查看」的反馈 -->
+    <CaptureRecordingList mode="audio" />
   </BaseCard>
 </template>
 
 <script lang="ts">
-import { computed, defineComponent, onMounted, onBeforeUnmount, reactive, ref } from 'vue';
-import { BaseButton, BaseCard, SelectionTable, BaseSearchBar } from '../components/base';
+import { computed, defineComponent, onMounted, onBeforeUnmount, reactive, ref, watch } from 'vue';
+// UI 三批（组1）：新增共享组件 RestrictedBanner（受限横幅唯一实现）与 BaseTag（状态徽标唯一实现），
+// 替换本面板模板中的复制版横幅与 .chip/.dup-badge 徽标
+import { BaseButton, BaseCard, SelectionTable, BaseSearchBar, RestrictedBanner, BaseTag, ExprFilterInput } from '../components/base';
+// 录制成果列表：录音完成后经后台落库的产物（试听/下载 M4A/删除）
+import CaptureRecordingList from '../components/CaptureRecordingList.vue';
+// Round 5 #29：缓存捕捉 / 深度搜索按钮组（音视频面板共用）
+import MediaSweepControls from '../components/MediaSweepControls.vue';
+// UI 三批（组6）：面板标题集中术语常量（PANEL_TITLES.audio = 「音频抓取」），与分段 tab 同源
+import { PANEL_TITLES } from '../utils/terminology';
 import { GLOBAL_SHORTCUT_HINT } from '../utils/shortcutHints';
 import { useListSearch } from '../composables/useListSearch';
 import { useRowHighlight } from '../composables/useRowHighlight';
 import { useResourceCounts } from '../composables/useResourceCounts';
+// 评审（UI 二批之一）：分页切片/页码钳制/重复集合计算/重复项操作/过滤判定统一走共享纯函数模块
+import {
+  slicePage, clampPage, computeDuplicateSet, collectDuplicateKeys,
+  hideRedundantDuplicates, matchesAudioFilter, summarizeReasons
+} from '../utils/listAdapt';
 import { MessageType, type AudioItemDTO } from '@/messaging';
+// Round 5 #27/#28：格式标签与属性过滤表达式（纯模块，与单测同一入口）
+import { formatLabelOf } from '@/core/mediaMeta';
+import { compileFilterCached } from '@/core/mediaFilter';
 import { addDownload, subscribe, retryDownload, cancelDownload, type DownloadTask } from '../services/downloadQueue';
 import { exportRowsAsJSON, exportRowsAsCSV } from '../services/exportList';
 import { addToBasket } from '../services/collection';
@@ -132,6 +194,8 @@ import { loadHistory, isDownloaded } from '../services/downloadHistory';
 import { loadState, saveState } from '../services/persist';
 import { loadSettings } from '../services/settings';
 import { markProcessed, isProcessed, mediaKey } from '../composables/useMediaRegistry';
+// P1-8：分级日志（扩展页面上下文默认 info 级）
+import { createLogger } from '@/utils/logger';
 import {
   getActiveTabInfo,
   sendMessageToTab,
@@ -139,9 +203,14 @@ import {
   ensureContentConnected,
   getAllFramesInfo,
   getAllFrameIds,
+  sendRuntimeMessage,
   type FrameInfo
 } from '../utils/chromeMessaging';
 import { getRestrictedPageMessage } from '../utils/restrictedPages';
+import { isResourceUpdateFromBoundSource } from '../utils/resourceUpdate';
+
+/** 本模块 logger：保留原 `[audio enrich]` 前缀语义 */
+const log = createLogger('audio enrich');
 
 interface AudioListResponse {
   success: boolean;
@@ -158,7 +227,10 @@ interface AudioMeta {
 
 export default defineComponent({
   name: 'AudioGrabPanel',
-  components: { BaseButton, BaseCard, SelectionTable, BaseSearchBar },
+  // UI 三批（组1）：注册共享组件 RestrictedBanner / BaseTag（Options API 需在 components 中声明）
+  components: { BaseButton, BaseCard, SelectionTable, BaseSearchBar, RestrictedBanner, BaseTag, CaptureRecordingList, MediaSweepControls, ExprFilterInput },
+  // UI 二批之二：网站目录降级为抓取空状态入口后，本面板通过该事件请求容器打开目录覆盖层
+  emits: ['open-site-catalog'],
   setup() {
     const { setCount } = useResourceCounts();
     const items = ref<AudioItemDTO[]>([]);
@@ -179,13 +251,20 @@ export default defineComponent({
     const minDuration = ref<number>(0);
     const minSize = ref<number>(0);
     const filterDownloadStatus = ref<'all'|'downloaded'|'new'>('all');
+    // Round 5 #28：属性过滤表达式（size>50MB and format=mp3）。语法错误只提示不裁剪列表
+    const filterExpr = ref('');
+    const filterExprError = computed(() => compileFilterCached(filterExpr.value).error || '');
+    // 评审（UI 二批之一）问题 3：「隐藏重复」开关（会话级，不持久化）
+    const hideDuplicates = ref(false);
+    // 评审（UI 二批之一）问题 1：当前展开"⋯"详情的行 URL（单开模式，避免窄屏堆叠过长）
+    const expandedUrl = ref<string | null>(null);
     const sortKey = ref<string>(''); // duration|size|title|url
     const sortDir = ref<'asc'|'desc'>('asc');
-    const searchKit = useListSearch<string>({
+    const searchKit = useListSearch({
       onRefresh: () => refreshAudioList(),
-      selectAll: () => { selected.clear(); items.value.forEach(i=> selected.add(i.url)); scheduleSave(); },
+      selectAll: () => { selected.clear(); displayAudioItems.value.forEach(i=> selected.add(i.url)); scheduleSave(); },
       clearSelection: () => { selected.clear(); scheduleSave(); },
-      invertSelection: () => { const all = items.value.map(i=> i.url); const next = new Set<string>(); all.forEach(u=>{ if(!selected.has(u)) next.add(u); }); selected.clear(); next.forEach(u=> selected.add(u)); scheduleSave(); },
+      invertSelection: () => { const all = displayAudioItems.value.map(i=> i.url); const next = new Set<string>(); all.forEach(u=>{ if(!selected.has(u)) next.add(u); }); selected.clear(); next.forEach(u=> selected.add(u)); scheduleSave(); },
       selectNew: () => { newAudioHighlight.forEach(u=> { if(typeof u === 'string') selected.add(u); }); scheduleSave(); }
     });
     const frameMode = ref<'auto'|'top'|'frame'>('auto');
@@ -203,8 +282,19 @@ export default defineComponent({
 
     const selectedCount = computed(() => selected.size);
     const hasSelection = computed(() => selected.size > 0);
-    const allSelected = computed(() => items.value.length > 0 && selected.size === items.value.length);
-    const filteredItems = computed(()=> applyFilterAndSort(items.value));
+    // 全选语义：作用于完整过滤结果（displayAudioItems），与导出/批量下载口径一致
+    const allSelected = computed(() => displayAudioItems.value.length > 0 && displayAudioItems.value.every(i => selected.has(i.url)));
+
+    // ── 分页渲染（评审问题 2：对齐图片面板既有方案；UI 三批组6 术语同步）──
+    const PAGE_SIZE = 60; // 每页渲染行数：与图片面板一致，保持同一交互习惯
+    const page = ref(1); // 当前页码（1 起）
+    const totalPages = computed(() => Math.max(1, Math.ceil(displayAudioItems.value.length / PAGE_SIZE)));
+    /** 当前页渲染切片（共享纯函数 slicePage，只渲染本页行） */
+    const pagedAudioItems = computed(() => slicePage(displayAudioItems.value, page.value, PAGE_SIZE));
+    // 过滤/刷新后列表变短：页码越界时自动钳制到最后一页
+    watch(displayAudioItems, () => {
+      page.value = clampPage(page.value, displayAudioItems.value.length, PAGE_SIZE);
+    });
 
     let saveTimer: number | null = null;
     function scheduleSave(){
@@ -213,12 +303,74 @@ export default defineComponent({
     }
 
     let boundFrameId: number | null = null; // 当前音频列表绑定的来源 frameId（增量更新按 frame 过滤）
+    let boundTabId: number | null = null; // 当前音频列表绑定的来源 tabId（增量更新按 tab 过滤，防后台标签页串扰）
+
+    /** 网络嗅探补充的音频（DOM 增量更新时需重新并入，否则会被全量覆盖掉） */
+    const networkAudioExtras = ref<AudioItemDTO[]>([]);
+
+    /** 把网络嗅探补充项并回 DOM 扫描结果，按 URL 去重、DOM 项优先 */
+    function withNetworkAudio(domItems: AudioItemDTO[]): AudioItemDTO[] {
+      if (!networkAudioExtras.value.length) return domItems;
+      const seen = new Set(domItems.map(i => i.url));
+      const extra = networkAudioExtras.value.filter(i => !seen.has(i.url));
+      return extra.length ? [...domItems, ...extra] : domItems;
+    }
+
+    /**
+     * 拉取后台网络嗅探到的音频直链并缓存为补充项。
+     * DOM 扫描（content-scripts/audio.ts）只认 .mp3/.m4a 等扩展名与 <audio> 标签，
+     * 而大量站点的音频地址无扩展名、仅靠 Content-Type: audio/* 判定，只有后台
+     * webRequest 通道看得到。此前该通道只被视频面板消费，音频面板永远漏掉这部分。
+     * @param tabId 当前标签页
+     * @param domItems DOM 扫描结果（优先保留，标题更准确）
+     */
+    async function mergeNetworkAudio(tabId: number, domItems: AudioItemDTO[]): Promise<AudioItemDTO[]> {
+      try {
+        const resp = await sendRuntimeMessage<{ success?: boolean; sources?: { url: string; kind?: string; streamOnly?: boolean; mimeType?: string; extension?: string; size?: number }[] }>(
+          { type: MessageType.GET_CAPTURED_VIDEO_SOURCES, tabId }
+        );
+        if (!resp?.success || !Array.isArray(resp.sources)) return withNetworkAudio(domItems);
+        const extras: AudioItemDTO[] = [];
+        const seen = new Set<string>();
+        resp.sources.forEach(s => {
+          // streamOnly 是 YouTube SABR 这类取不回文件的流；非 http(s) 无法下载
+          if (s.kind !== 'audio' || s.streamOnly || !/^https?:/i.test(s.url || '') || seen.has(s.url)) return;
+          seen.add(s.url);
+          extras.push({
+            url: s.url,
+            title: titleFromAudioUrl(s.url),
+            mimeType: s.mimeType,
+            extension: s.extension,
+            size: s.size,
+            kind: 'audio'
+          });
+        });
+        networkAudioExtras.value = extras;
+        return withNetworkAudio(domItems);
+      } catch (e) {
+        log.warn('合并网络嗅探音频失败', e);
+        return withNetworkAudio(domItems);
+      }
+    }
+
+    /** 无标题的网络音频：用路径末段兜底，再退到主机名，避免整列显示"未命名音频" */
+    function titleFromAudioUrl(url: string): string {
+      try {
+        const u = new URL(url);
+        const last = u.pathname.split('/').filter(Boolean).pop();
+        return last ? decodeURIComponent(last) : u.hostname;
+      } catch {
+        return url;
+      }
+    }
+
     async function refreshAudioList() {
       loading.value = true;
       error.value = null;
       lastAction.value = '';
       try {
         const tabId = await ensureActiveTab();
+        boundTabId = tabId;
         // 启用音频相关功能（轻量，无需等待）
         try { void sendMessageToTab<any>(tabId, { type: MessageType.ENABLE_FEATURES, payload: { audio: true, spaWatchers: true } }); } catch { /* noop */ }
         try { frames.value = await getAllFramesInfo(tabId); } catch { /* noop */ }
@@ -246,11 +398,11 @@ export default defineComponent({
         boundFrameId = typeof (response as any)?.frameId === 'number'
           ? (response as any).frameId
           : (frameMode.value === 'frame' ? (parseSelectedFrameId() ?? 0) : 0);
-        items.value = response.items || [];
+        items.value = await mergeNetworkAudio(tabId, response.items || []);
         selected.clear();
         setCount('audio', items.value.length);
         // 异步补充元数据
-        enrichAllMetadata(items.value).catch((e) => console.warn('[audio enrich] error', e));
+        enrichAllMetadata(items.value).catch((e) => log.warn('error', e));
       } catch (err: any) {
         // 自动修复：接收端缺失时尝试注入并重试一次
         if (isReceivingEndMissingError(err)) {
@@ -258,9 +410,11 @@ export default defineComponent({
             const tabId = await ensureActiveTab();
             const res = await ensureContentConnected(tabId);
             if (res.ok) {
+              boundTabId = tabId;
+              boundFrameId = 0; // 重试走顶层获取，绑定随之回到主页面
               const retry = await sendMessageToTab<AudioListResponse>(tabId, { type: MessageType.REQUEST_AUDIO_LIST });
               if (retry?.success && Array.isArray(retry.items)) {
-                items.value = retry.items;
+                items.value = await mergeNetworkAudio(tabId, retry.items);
                 selected.clear();
                 setCount('audio', items.value.length);
                 enrichAllMetadata(items.value).catch(()=>{});
@@ -278,22 +432,33 @@ export default defineComponent({
       }
     }
 
+    /**
+     * 「修复扫描」入口（原"重试连接"，评审问题 6 改名）：
+     * 内容脚本未注入时重新注入，成功后自动再次扫描；提示语面向用户描述结果与下一步。
+     */
     async function ensureConnectAndRefresh(){
       ensureBusy.value = true; error.value=null; lastAction.value='';
       try{
         const tabId = await ensureActiveTab();
         const res = await ensureContentConnected(tabId);
-        if(!res.ok){ throw new Error(res.error || `连接失败（已检查 ${res.framesChecked} 帧）`); }
-        lastAction.value = `连接成功（${res.framesConnected}/${res.framesChecked}）`;
+        if(!res.ok){ throw new Error(res.error || `未能连接到页面（已检查 ${res.framesChecked} 个子页面）`); }
+        lastAction.value = `已重新连接页面（${res.framesConnected}/${res.framesChecked} 个子页面），正在扫描…`;
+        log.info(`修复扫描成功：连接 ${res.framesConnected}/${res.framesChecked} 个子页面`);
         await refreshAudioList();
-      }catch(e:any){ error.value = e?.message || '重试连接失败'; }
+      }catch(e:any){ error.value = e?.message || '修复扫描失败，请刷新页面后重试'; }
       finally{ ensureBusy.value=false; }
     }
 
+    /** 全选/取消全选：作用于完整过滤结果（displayAudioItems），而非仅当前页或原始列表 */
     function handleSelectAll(checked: boolean) {
-      if (checked) { selected.clear(); items.value.forEach((item) => selected.add(item.url)); }
+      if (checked) { selected.clear(); displayAudioItems.value.forEach((item) => selected.add(item.url)); }
       else { selected.clear(); }
       scheduleSave();
+    }
+
+    /** 「⋯」详情展开切换：单开模式，再次点击同一行收起 */
+    function toggleExpandUrl(url: string) {
+      expandedUrl.value = expandedUrl.value === url ? null : url;
     }
 
     function handleRowSelect(url: string) {
@@ -308,37 +473,62 @@ export default defineComponent({
         lastAction.value = '已复制链接'; toast.success('已复制链接');
       } catch (err) {
         error.value = '复制失败，请手动选择文本';
-        console.error(err);
+        log.error('复制链接失败:', err);
       }
     }
 
+    /** 单条下载：入队成功即时反馈；失败给出可行动提示（评审问题 5） */
     async function downloadSingle(item: AudioItemDTO) {
       try {
         const key = mediaKey({ url: item.url, kind: 'audio', width:0, height:0 });
         if(isProcessed(key)) { lastAction.value = '已处理'; return; }
-        triggerDownload(item); // queue integration
+        const id = await triggerDownload(item); // queue integration
+        if (!id) throw new Error('队列创建失败');
         markProcessed(key);
-        lastAction.value = '已加入队列'; scheduleSave();
+        lastAction.value = '已加入队列';
+        toast.success('已加入下载队列');
+        scheduleSave();
       } catch (err: any) {
         error.value = err?.message || '下载失败';
+        toast.error(`加入下载队列失败：${String(err?.message || err)}`);
+        log.error(`单条音频下载入队失败: ${item.url}`, err);
       }
     }
 
+    /**
+     * 批量下载（评审问题 5）：逐条等待入队结果并统计失败原因，
+     * 完成后用 Toast 汇总「已加入 N 条，M 条失败：原因」，替代旧 11px 小字。
+     */
     async function downloadSelected() {
       if (!hasSelection.value) return;
       error.value = null;
       let count = 0;
+      /** 失败原因清单（去重后取前两类进 Toast） */
+      const reasons: string[] = [];
       try {
-        for (const url of selected) {
-          const item = items.value.find((it) => it.url === url);
+        for (const url of Array.from(selected)) {
+          // 只作用于过滤结果中可见的项（与导出/全选口径一致），
+          // 被过滤隐藏的残留勾选不参与批量下载
+          const item = displayAudioItems.value.find((it) => it.url === url);
           if (!item) continue;
           const key = mediaKey({ url: item.url, kind: 'audio', width:0, height:0 });
           if(isProcessed(key)) continue;
-          triggerDownload(item);
-          markProcessed(key);
-          count++;
+          try {
+            const id = await triggerDownload(item);
+            if (!id) throw new Error('队列创建失败');
+            markProcessed(key);
+            count++;
+          } catch (e: any) {
+            reasons.push(String(e?.message || e));
+          }
         }
-        lastAction.value = `队列新增 ${count} 条`; scheduleSave();
+        const fail = reasons.length;
+        lastAction.value = fail ? `已加入 ${count} 条，${fail} 条失败` : `已加入 ${count} 条`;
+        if (fail) toast.error(`已加入 ${count} 条，${fail} 条失败：${summarizeReasons(reasons)}`);
+        else if (count) toast.success(`已加入下载队列 ${count} 条`);
+        else toast.info('没有可下载项（均已加入队列或已处理）');
+        log.info(`批量下载完成：成功 ${count} 条，失败 ${fail} 条`);
+        scheduleSave();
       } catch (err: any) {
         error.value = err?.message || '批量加入队列失败';
       }
@@ -354,9 +544,15 @@ export default defineComponent({
       }
     }
 
-    function triggerDownload(item: AudioItemDTO) {
+    /**
+     * 触发下载入队。
+     * 评审（UI 二批之一）问题 5：返回后台分配的队列任务 id（失败为空串），
+     * 供单条/批量下载判断入队是否真正成功并汇总失败数。
+     * @param item 音频条目
+     */
+    function triggerDownload(item: AudioItemDTO): Promise<string> {
       // 传 undefined 让后台命名模板处理
-      addDownload(item.url, undefined, 'audio', MessageType.START_DOWNLOAD);
+      return addDownload(item.url, undefined, 'audio', MessageType.START_DOWNLOAD);
     }
 
     function formatDuration(d?: number) {
@@ -373,6 +569,11 @@ export default defineComponent({
       if (mb >= 1) return mb.toFixed(2) + 'MB';
       const kb = bytes / 1024;
       return kb.toFixed(1) + 'KB';
+    }
+
+    /** 封装格式标签（MP3/M4A/HLS…）；认不出返回空串，模板据此不渲染徽标 */
+    function formatOf(item: AudioItemDTO): string {
+      return formatLabelOf({ url: item.url, mimeType: item.mimeType, extension: item.extension }) || '';
     }
 
     async function enrichAllMetadata(list: AudioItemDTO[]) {
@@ -453,7 +654,7 @@ export default defineComponent({
       try { const s = await loadSettings(); showShortcutHints.value = s.showShortcutHints; } catch { /* noop */ }
       // 监听录制状态（音频模式）
       if(chrome?.runtime?.onMessage?.addListener){
-        const handler: Parameters<typeof chrome.runtime.onMessage.addListener>[0] = (message) => {
+        const handler: Parameters<typeof chrome.runtime.onMessage.addListener>[0] = (message, sender) => {
           if(!message || !message.type) return;
           if(message.type === MessageType.VIDEO_RECORDING_STATUS && message.mode === 'audio') {
             if(message.status === 'started'){ 
@@ -466,8 +667,8 @@ export default defineComponent({
             else if(message.status === 'completed'){ 
               audioRecording.recording = false;
               audioRecording.fileName = message.fileName;
-              lastAction.value = '音频录制完成';
-              // 录制产物由内容脚本自行触发下载（见 content-scripts/router.ts recorder.onstop），此处无需重复处理
+              lastAction.value = '音频录制完成，成果见下方「录制成果」列表';
+              // 录制产物经后台落库后出现在下方「录制成果」列表（交接链路见 content-scripts/router.ts 与 background/captureRecording.ts）
             }
             else if(message.status === 'error'){ 
               audioRecording.recording = false; 
@@ -480,9 +681,9 @@ export default defineComponent({
           if(message.type === MessageType.RESOURCE_UPDATE){
             try {
               const payload: any = (message as any).payload || {};
-              // frameId 守卫：忽略来自其他 frame 的自动增量，防止跨 frame 列表互相覆盖
-              const updFrameId = typeof payload.frameId === 'number' ? payload.frameId : 0;
-              if(updFrameId === (boundFrameId ?? 0) && Array.isArray(payload.audio)){
+              // tab + frame 双守卫：payload 只带 frameId，tabId 取自 sender，
+              // 否则后台标签页（同为顶层 frame 0）的增量会覆盖当前列表
+              if(isResourceUpdateFromBoundSource(sender, payload, { tabId: boundTabId, frameId: boundFrameId }) && Array.isArray(payload.audio)){
                 const diff = payload.diff?.audio;
                 if (diff?.removed?.length) {
                   diff.removed.forEach((u: string) => {
@@ -501,7 +702,7 @@ export default defineComponent({
                   const added = incoming.filter(a => !prev.has(a.url)).map(a => a.url);
                   if (added.length) markAudioNew(added);
                 }
-                items.value = incoming;
+                items.value = withNetworkAudio(incoming);
                 setCount('audio', items.value.length);
                 lastAction.value = '自动增量更新';
               }
@@ -534,27 +735,24 @@ export default defineComponent({
       return host? `#${id} ${host}` : `#${id}`;
     }
 
+    /**
+     * 过滤 + 隐藏重复 + 排序的内部实现（纯派生，无副作用）。
+     * 评审（UI 二批之一）问题 3/4：过滤条件走共享纯函数 matchesAudioFilter；
+     * 隐藏重复复用 duplicateSet 判定结果，按「归一化URL|大小」分组每组保留第一条。
+     * @param list 待过滤列表（含短暂保留的已移除项）
+     */
     function applyFilterAndSort(list: AudioItemDTO[]): AudioItemDTO[] {
-      const filtered = list.filter(it => {
-        const meta = metaMap[it.url] || {};
-        if(minDuration.value && (!meta.duration || meta.duration < minDuration.value)) return false;
-        if(minSize.value && (!meta.contentLength || meta.contentLength < minSize.value)) return false;
-        
-        // 下载状态过滤
-        if (filterDownloadStatus.value !== 'all') {
-          const downloaded = isDownloaded(it.url);
-          if (filterDownloadStatus.value === 'downloaded' && !downloaded) return false;
-          if (filterDownloadStatus.value === 'new' && downloaded) return false;
-        }
-
-        const q = searchKit.searchQuery.value.trim().toLowerCase();
-        if(q){
-          const titleHit = (it.title||'').toLowerCase().includes(q);
-          const urlHit = it.url.toLowerCase().includes(q);
-            if(!titleHit && !urlHit) return false;
-        }
-        return true;
-      });
+      const criteria = {
+        minDuration: minDuration.value,
+        minSize: minSize.value,
+        downloadStatus: filterDownloadStatus.value,
+        query: searchKit.searchQuery.value,
+        expr: filterExpr.value
+      };
+      let filtered = list.filter(it => matchesAudioFilter(it, metaMap[it.url] || {}, criteria, isDownloaded));
+      if (hideDuplicates.value) {
+        filtered = hideRedundantDuplicates(filtered, i => i.url, dupGroupKey, duplicateSet.value);
+      }
       if(!sortKey.value) return filtered;
       return filtered.slice().sort((a,b)=>{
         let va:any; let vb:any;
@@ -575,6 +773,37 @@ export default defineComponent({
       else { sortDir.value = sortDir.value==='asc' ? 'desc' : 'asc'; }
     }
     function applyAudioFilter(){ scheduleSave(); }
+
+    /** 「重置」入口：清空状态过滤与隐藏重复条件（minDuration/minSize 无 UI，保持默认） */
+    function resetFilter() {
+      filterDownloadStatus.value = 'all';
+      hideDuplicates.value = false;
+      filterExpr.value = '';
+      scheduleSave();
+      log.info('音频过滤条件已重置');
+    }
+
+    /**
+     * 选中全部重复项（评审问题 3）：把过滤结果中命中 duplicateSet 的项加入勾选。
+     * 判定完全复用 duplicateSet（URL+大小分组），不重算。
+     */
+    function selectDuplicates() {
+      const keys = collectDuplicateKeys(displayAudioItems.value, i => i.url, duplicateSet.value);
+      if (!keys.length) { toast.info('当前没有可选择的重复音频（元数据可能仍在补充）'); return; }
+      keys.forEach(k => selected.add(k));
+      scheduleSave();
+      lastAction.value = `已选中 ${keys.length} 个重复项`;
+      log.info(`选中重复项 ${keys.length} 个`);
+    }
+
+    /** 取消选中全部重复项（评审问题 3）：从勾选集合移除重复命中项，保留其余选择 */
+    function deselectDuplicates() {
+      const keys = collectDuplicateKeys(displayAudioItems.value, i => i.url, duplicateSet.value);
+      keys.forEach(k => selected.delete(k));
+      scheduleSave();
+      lastAction.value = keys.length ? `已取消选中 ${keys.length} 个重复项` : '没有重复项处于选中状态';
+      log.info(`取消选中重复项 ${keys.length} 个`);
+    }
 
     async function updateRestrictedHint(){
       try {
@@ -602,29 +831,21 @@ export default defineComponent({
     }
 
     function focusAudioSearch(){ searchKit.focusSearch(); }
-    function invertAudioSelection(){ const all = items.value.map(i=> i.url); const next = new Set<string>(); all.forEach(u=>{ if(!selected.has(u)) next.add(u); }); selected.clear(); next.forEach(u=> selected.add(u)); scheduleSave(); }
+    function invertAudioSelection(){ const all = displayAudioItems.value.map(i=> i.url); const next = new Set<string>(); all.forEach(u=>{ if(!selected.has(u)) next.add(u); }); selected.clear(); next.forEach(u=> selected.add(u)); scheduleSave(); }
     function selectNewAudio(){ newAudioHighlight.forEach(u=> { if(typeof u === 'string') selected.add(u); }); scheduleSave(); }
 
-    // 重复集合：同一归一化URL + contentLength >0 且出现次数>1
-    const duplicateSet = computed(() => {
-      const groups: Record<string, number> = {};
-      items.value.forEach(i => {
-        const meta = metaMap[i.url];
-        const len = meta?.contentLength || 0;
-        const norm = normalizeForDup(i.url);
-        const key = `${norm}|${len}`;
-        groups[key] = (groups[key]||0)+1;
-      });
-      const dup = new Set<string>();
-      items.value.forEach(i => {
-        const meta = metaMap[i.url];
-        const len = meta?.contentLength || 0;
-        const norm = normalizeForDup(i.url);
-        const key = `${norm}|${len}`;
-        if(groups[key] > 1) dup.add(i.url);
-      });
-      return dup;
-    });
+    /**
+     * 重复分组键（评审问题 3）：归一化 URL + contentLength。
+     * 元数据未就绪时大小按 0 参与分组——与旧实现的分组键完全一致，保持判定语义不变。
+     * @param item 音频条目
+     */
+    function dupGroupKey(item: AudioItemDTO): string | null {
+      const len = metaMap[item.url]?.contentLength || 0;
+      return `${normalizeForDup(item.url)}|${len}`;
+    }
+
+    // 重复集合：同一归一化URL + contentLength >0 且出现次数>1（共享纯函数 computeDuplicateSet）
+    const duplicateSet = computed(() => computeDuplicateSet(items.value, i => i.url, dupGroupKey));
 
     function retryTask(id: string){ retryDownload(id); }
     function cancelTask(id: string){ cancelDownload(id); }
@@ -717,8 +938,17 @@ export default defineComponent({
           // 保存录制上下文
           audioRecording.frameId = targetFrameId;
           audioRecording.videoIndex = targetIndex;
+          // 立即置位，不只依赖 VIDEO_RECORDING_STATUS 广播：侧栏面板是懒挂载的，
+          // 切换子 tab 会重挂载组件并漏掉 started 事件，按钮就会停在"提取"态，
+          // 而内容脚本其实已在录制，再次点击只会被回"该索引已在录制中"。
+          audioRecording.recording = true;
+          audioRecording.startedAt = resp?.startedAt || Date.now();
+          audioRecording.error = undefined;
+          lastAction.value = '音频录制中…再次点击停止并保存';
         }
-      } catch(e:any){ error.value = e?.message || '音频录制操作失败'; audioRecordingBusy.value=false; }
+      } catch(e:any){ error.value = e?.message || '音频录制操作失败'; }
+      // busy 只覆盖请求往返：此前仅靠广播复位，广播一旦漏收按钮就永久禁用
+      finally { audioRecordingBusy.value = false; }
     }
 
     // 需要一个定时器来更新计时显示
@@ -747,13 +977,17 @@ export default defineComponent({
     }
 
     // ===== 收集篮 =====
+    /** 批量加入收集篮（评审问题 5）：汇总新增与"已在篮中"数量，Toast 反馈 */
     async function addSelectedToBasket() {
-      const items = displayAudioItems.value
+      const picked = displayAudioItems.value
         .filter(a => selected.has(a.url))
         .map(a => ({ kind: 'audio' as const, url: a.url, title: a.title || undefined }));
-      const n = await addToBasket(items.filter(i => i.url));
-      if (n > 0) toast.success(`已加入收集篮 ${n} 项`);
+      const valid = picked.filter(i => i.url);
+      const n = await addToBasket(valid);
+      const skipped = valid.length - n;
+      if (n > 0) toast.success(skipped > 0 ? `已加入收集篮 ${n} 项，${skipped} 项已在篮中` : `已加入收集篮 ${n} 项`);
       else toast.info('选中项均已在收集篮中');
+      log.info(`加入收集篮：新增 ${n} 项，跳过 ${skipped} 项`);
     }
 
     // ===== 清单导出 =====
@@ -768,8 +1002,22 @@ export default defineComponent({
     }
 
     return {
-      items: filteredItems,
+      // UI 三批（组6）：PANEL_TITLES 放入 setup 返回值，供模板绑定 :title="PANEL_TITLES.audio"
+      PANEL_TITLES,
+      // 评审（UI 二批之一）：模板"已识别 N 条"展示原始扫描数（此前误暴露过滤结果），
+      // 过滤/隐藏重复后的条数由 displayAudioItems 单独展示
+      items,
       displayAudioItems,
+      pagedAudioItems,
+      page,
+      totalPages,
+      PAGE_SIZE,
+      hideDuplicates,
+      expandedUrl,
+      toggleExpandUrl,
+      selectDuplicates,
+      deselectDuplicates,
+      resetFilter,
       exportJson,
       exportCsv,
       newAudioHighlight,
@@ -789,6 +1037,9 @@ export default defineComponent({
       copyLink,
       downloadSingle,
       downloadSelected,
+      // 收口轮 lint 修复：模板"加入收集篮"按钮绑定了本组件函数，但 render 上下文漏暴露
+      // addSelectedToBasket（原为隐性运行时错误：按钮点击无效果），补入
+      addSelectedToBasket,
       extractHost,
       metaMap,
       formatDuration,
@@ -796,6 +1047,9 @@ export default defineComponent({
       duplicateSet,
       minDuration,
       minSize,
+      filterExpr,
+      filterExprError,
+      formatOf,
       sortKey,
       sortDir,
       toggleSort,
@@ -864,53 +1118,76 @@ function normalizeForDup(url: string): string {
   flex-wrap: wrap;
 }
 
+/* 过滤条（评审问题 3）：与图片面板同一布局与控件习惯（UI 三批组6 术语同步） */
+.filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.filter-bar label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--sp-color-muted);
+}
+.dup-toggle {
+  cursor: pointer;
+  user-select: none;
+}
+.dup-toggle input[type='checkbox'] {
+  width: 13px;
+  height: 13px;
+  accent-color: var(--sp-color-primary);
+  cursor: pointer;
+}
+
+/* 分页控件（评审问题 2）：与图片面板同款（UI 三批组6 术语同步） */
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background: var(--sp-color-bg-elevated);
+}
+.pager__info {
+  /* UI 三批（组2）：分页计数属元信息，11px → 12px */
+  font-size: 12px;
+  color: var(--sp-color-muted);
+  margin: 0 4px;
+}
+
 .table-status {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 11px;
+  /* UI 三批（组2）：状态/计数属信息性文字，11px → 12px */
+  font-size: 12px;
   color: var(--sp-color-muted);
+  flex-wrap: wrap;
 }
 
-.status { font-size: 11px; color: var(--sp-color-muted); }
+.status { font-size: 12px; color: var(--sp-color-muted); }
 .status--error { color: var(--sp-color-danger); }
 
-.restricted-banner {
-  display: flex;
-  align-items: flex-start;
-  gap: 7px;
-  margin-bottom: 10px;
-  padding: 8px 10px;
-  border-radius: var(--sp-radius-md);
-  background: var(--sp-color-warning-light);
-  border: 1px solid rgba(245, 158, 11, 0.25);
-  color: var(--sp-color-warning);
-  font-size: 11px;
-  line-height: 1.4;
+/* UI 三批（组1）：原 .restricted-banner/.banner-close/.banner-icon/.banner-hint 复制版样式
+   已删除，横幅视觉唯一实现收敛在共享组件 RestrictedBanner 内部 */
+
+/* UI 二批之二：空状态「网站目录」入口（网站目录从一级 tab 降级后的引导链接） */
+.empty-catalog-hint { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.catalog-entry {
+  background: none; border: none; padding: 0;
+  /* UI 三批（组2）：入口链接属信息性文字，11px → 12px */
+  color: var(--sp-color-primary); font-size: 12px; font-weight: 600;
+  font-family: var(--sp-font-family); cursor: pointer;
+  text-decoration: underline; text-underline-offset: 2px;
+  transition: color var(--sp-transition-fast);
 }
-.restricted-banner span { flex: 1; }
-.banner-close {
-  background: none;
-  border: none;
-  cursor: pointer;
-  color: var(--sp-color-warning);
-  opacity: 0.6;
-  padding: 0;
-  display: flex;
-  align-items: center;
-  flex-shrink: 0;
-  margin-top: 1px;
-  transition: opacity var(--sp-transition-fast);
-}
-.banner-close:hover { opacity: 1; }
-.banner-icon { flex-shrink: 0; margin-top: 1px; }
-.banner-hint {
-  display: block;
-  font-style: normal;
-  font-size: 11px;
-  opacity: 0.7;
-  margin-top: 2px;
-}
+.catalog-entry:hover { color: var(--sp-color-primary-hover); }
+.catalog-entry:focus-visible { outline: 2px solid var(--sp-color-primary); outline-offset: 2px; border-radius: var(--sp-radius-sm); }
 
 .empty-row {
   text-align: center;
@@ -932,36 +1209,56 @@ function normalizeForDup(url: string): string {
   100% { background: transparent; opacity: 0; }
 }
 
-.dup-badge {
-  display: inline-flex;
-  align-items: center;
-  margin-left: 4px;
-  padding: 1px 5px;
-  background: var(--sp-color-warning-light);
-  color: var(--sp-color-warning);
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 600;
-  border: 1px solid rgba(245, 158, 11, 0.25);
-}
+/* UI 三批（组1）：原 .dup-badge 复制版徽标样式已删除，「重复」徽标收敛到共享组件 BaseTag（warning 语义），
+   原图像无边框/音频有边框的分叉就此消除 */
 
 .title {
   font-size: 12px;
   font-weight: 500;
   color: var(--sp-color-heading);
+  word-break: break-all;
 }
 
 .subtitle {
-  font-size: 11px;
+  /* UI 三批（组2）：来源域名属元信息，11px → 12px */
+  font-size: 12px;
   color: var(--sp-color-muted);
   margin-top: 1px;
 }
 
-.url-cell a {
-  color: var(--sp-color-primary);
-  font-size: 11px;
-  word-break: break-all;
+/* 行内元数据行（评审问题 1）：来源/时长/大小/状态徽标内联，替代原 5 个独立列 */
+.item-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  flex-wrap: wrap;
+  /* UI 三批（组2）：时长/大小等元信息，11px → 12px */
+  font-size: 12px;
+  color: var(--sp-color-muted);
 }
+
+/* "⋯"展开的行详情：完整地址 + 复制（原"链接"常驻列折叠于此） */
+.row-detail {
+  margin-top: 6px;
+  padding: 6px 8px;
+  background: var(--sp-color-bg-subtle);
+  border-radius: var(--sp-radius-sm);
+  /* UI 三批（组2）：详情区（完整地址）属信息性文字，11px → 12px */
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.detail-url {
+  color: var(--sp-color-primary);
+  word-break: break-all;
+  min-width: 0;
+  flex: 1;
+}
+
+/* UI 三批（组1/组2）：原 .chip/.chip--success/.chip--ghost 复制版徽标样式已删除，
+   「已下载/未下载」状态徽标唯一实现收敛在共享组件 BaseTag（size=sm，12px） */
 
 .row-actions {
   display: flex;
@@ -987,7 +1284,9 @@ input[type='checkbox'] {
   color: var(--sp-color-danger);
   font-weight: 700;
   letter-spacing: 0.05em;
-  animation: blink 1s infinite;
+  /* UI 三批（组3）：原 blink 1s 硬切闪烁（50% 处 opacity 突变）对注视录制计时的用户
+     视觉刺激过强，改为 1.6s ease-in-out 平滑渐隐渐显，保留「录制进行中」的动感提示 */
+  animation: rec-timer-fade 1.6s ease-in-out infinite;
 }
 
 .sp-select {
@@ -1003,5 +1302,10 @@ input[type='checkbox'] {
   cursor: pointer;
 }
 
-@keyframes blink { 50% { opacity: 0.5; } }
+/* UI 三批（组3）：录制计时平滑渐变关键帧（替代原 blink 硬切闪烁）：
+   0%/100% 全亮、50% 降至 0.55，配合 ease-in-out 无突兀跳变 */
+@keyframes rec-timer-fade {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
 </style>

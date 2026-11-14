@@ -1,6 +1,12 @@
 /**
- * 统一媒体去重与标识工具。
- * key 结构: type|normalizedUrl|WxH|hashPrefix
+ * 统一媒体标识与感知哈希工具（内容脚本与侧栏共用，保证增量 diff 的 key 同源）。
+ * key 结构: type|normalizedUrl|WxH
+ *
+ * key 是资源的稳定身份，绝不含 phash：哈希要等图片 onload 才算得出来，
+ * 编进 key 会让同一张图在加载前后变成两个身份，勾选态/懒加载态/已下载态全部错位。
+ * 感知哈希判重由 dupTracker 独立按 phash 前缀比对，不依赖 key。
+ * 注意：computePerceptualHash 依赖 document，仅在内容脚本/侧栏上下文调用；
+ *       后台导入本模块不会报错（函数体在调用时才求值）。
  */
 export interface MediaIdentity {
   url: string;
@@ -28,8 +34,7 @@ export function buildUnifiedMediaKey(obj: Partial<MediaIdentity>): string {
   const type = obj.kind || (obj.mime ? 'audio' : 'media');
   const w = obj.width || 0;
   const h = obj.height || 0;
-  const hashPrefix = obj.phash ? String(obj.phash).slice(0,8) : '';
-  return `${type}|${norm}|${w}x${h}|${hashPrefix}`;
+  return `${type}|${norm}|${w}x${h}`;
 }
 
 /**

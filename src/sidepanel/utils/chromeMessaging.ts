@@ -1,3 +1,11 @@
+// P1-1 协议收敛：探测消息的类型改用消息枚举，消除裸字符串
+import { MessageType } from '@/messaging';
+// P1-8：分级日志（扩展页面上下文默认 info 级）
+import { createLogger } from '@/utils/logger';
+
+/** 本模块 logger：保留原 `[sidepanel]` 前缀语义 */
+const log = createLogger('sidepanel');
+
 const RECEIVER_MISSING_REGEX = /receiving end does not exist|could not establish connection/i;
 const DEFAULT_CONTENT_SCRIPTS = ['js/content.js'];
 
@@ -37,7 +45,7 @@ export async function getActiveTabInfo(): Promise<ActiveTabInfo | null> {
     }
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       if (chrome.runtime.lastError) {
-        console.warn('[sidepanel] tabs.query failed:', chrome.runtime.lastError.message);
+        log.warn('tabs.query failed:', chrome.runtime.lastError.message);
         resolve(null);
         return;
       }
@@ -183,25 +191,15 @@ function extractErrorMessage(error: unknown): string {
   return String(error);
 }
 
+/**
+ * 获取标签页全部 frameId。
+ * 合并说明（P2-1）：旧实现与 getAllFramesInfo 是同一 API（chrome.webNavigation.getAllFrames）
+ * 的两份封装，现统一委托给 getAllFramesInfo，仅做一层投影，对外行为不变。
+ * @param tabId 目标标签页 ID
+ */
 export async function getAllFrameIds(tabId: number): Promise<number[]> {
-  return new Promise((resolve) => {
-    try {
-      if (!chrome?.webNavigation?.getAllFrames) {
-        resolve([]);
-        return;
-      }
-      chrome.webNavigation.getAllFrames({ tabId }, (details) => {
-        if (chrome.runtime.lastError) {
-          resolve([]);
-          return;
-        }
-        const ids = Array.isArray(details) ? details.map((d) => d.frameId).filter((n) => typeof n === 'number') : [];
-        resolve(ids);
-      });
-    } catch {
-      resolve([]);
-    }
-  });
+  const frames = await getAllFramesInfo(tabId);
+  return frames.map((f) => f.frameId).filter((n) => typeof n === 'number');
 }
 
 /**
@@ -217,7 +215,7 @@ export async function ensureContentConnected(tabId: number): Promise<{ ok: boole
     // 先探测顶层
     try {
       checked++;
-      const r = await sendMessageToTab(tabId, { type: 'GET_VIDEO_LIST' });
+      const r = await sendMessageToTab(tabId, { type: MessageType.GET_VIDEO_LIST });
       if (r) connected++;
     } catch (e) {
       if (isReceivingEndMissingError(e)) missingCount++;
@@ -226,7 +224,7 @@ export async function ensureContentConnected(tabId: number): Promise<{ ok: boole
     for (const fid of frames) {
       try {
         checked++;
-        const r = await sendMessageToTab(tabId, { type: 'GET_VIDEO_LIST' }, { frameId: fid });
+        const r = await sendMessageToTab(tabId, { type: MessageType.GET_VIDEO_LIST }, { frameId: fid });
         if (r) connected++;
       } catch (e) {
         if (isReceivingEndMissingError(e)) missingCount++;

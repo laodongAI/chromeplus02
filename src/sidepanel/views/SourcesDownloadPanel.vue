@@ -1,5 +1,6 @@
 <template>
-  <BaseCard title="Sources文件下载" subtitle="浏览和下载页面资源文件，保持目录结构" :padded="true">
+  <!-- UI 三批（组6）：标题「Sources文件下载」改引用术语表 PANEL_TITLES.sources（资源包下载），消除英文残留 -->
+  <BaseCard :title="PANEL_TITLES.sources" subtitle="浏览和下载页面资源文件，保持目录结构" :padded="true">
     <div class="toolbar">
       <div class="toolbar__left">
         <BaseButton size="sm" variant="secondary" :loading="scanning" @click="scanSourcesTree">
@@ -30,13 +31,11 @@
       </div>
     </div>
 
-    <div v-if="error" class="error-banner">
-      <span class="error-icon">⚠️</span>
-      <div class="error-content">
-        <div class="error-title">操作失败</div>
-        <div class="error-message">{{ error }}</div>
-      </div>
-    </div>
+    <!-- UI 三批（组1）：本地 ⚠️ emoji 版 error-banner 整块换成共享 ErrorBanner
+         （danger 红语义 + 内联 SVG 图标 + 可关闭），关闭时清空 error 状态 -->
+    <ErrorBanner v-if="error" :message="error" title="操作失败" @close="error = null" />
+    <!-- 打包成功但有文件缺失：黄色警示（不是操作失败，不能抢 danger 语义） -->
+    <ErrorBanner v-if="notice" :message="notice" title="已下载，但有文件缺失" tone="warning" @close="notice = null" />
 
     <div v-if="downloadProgress > 0 && downloadProgress < 1" class="progress-container">
       <div class="progress-header">
@@ -54,7 +53,10 @@
     </div>
 
     <div v-if="!scanning && tree.length === 0" class="empty-state">
-      <div class="empty-icon">📁</div>
+      <!-- UI 三批（组5）：空状态 📁 emoji 换内联 stroke SVG（currentColor 跟随主题，跨平台一致） -->
+      <div class="empty-icon" aria-hidden="true">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+      </div>
       <div class="empty-title">尚未扫描资源</div>
       <div class="empty-hint">点击"扫描资源目录"开始浏览页面资源文件</div>
     </div>
@@ -83,9 +85,19 @@
 
 <script lang="ts">
 import { computed, defineComponent, reactive, ref } from 'vue';
-import { BaseButton, BaseCard } from '../components/base';
+// UI 三批（组1）：新增共享 ErrorBanner，替换本面板手抄的 ⚠️ emoji 错误横幅
+import { BaseButton, BaseCard, ErrorBanner } from '../components/base';
+// UI 三批（组6）：面板标题引用术语表（Options API 需从 setup 返回供模板绑定）
+import { PANEL_TITLES } from '../utils/terminology';
 import { sendRuntimeMessage } from '../utils/chromeMessaging';
+// P1-1 协议收敛：SOURCES_* 消息类型统一从消息协议模块导入，消除裸字符串
+import { MessageType } from '@/messaging';
+// P1-8：分级日志（扩展页面上下文默认 info 级）
+import { createLogger } from '@/utils/logger';
 import TreeNode from '../components/base/TreeNode.vue';
+
+/** 本模块 logger：保留原 `[SourcesDownloadPanel]`/`[SourcesDownload]` 前缀语义 */
+const log = createLogger('SourcesDownload');
 
 interface SourceTreeNode {
   name: string;
@@ -98,7 +110,7 @@ interface SourceTreeNode {
 
 export default defineComponent({
   name: 'SourcesDownloadPanel',
-  components: { BaseButton, BaseCard, TreeNode },
+  components: { BaseButton, BaseCard, ErrorBanner, TreeNode },
   setup() {
     const tree = ref<SourceTreeNode[]>([]);
     const expandedNodes = reactive(new Set<string>());
@@ -107,6 +119,8 @@ export default defineComponent({
     const downloading = ref(false);
     const downloadProgress = ref(0);
     const error = ref<string | null>(null);
+    /** 部分成功提示：打包完成但有文件未入包时由后台的 skipped 摘要填充 */
+    const notice = ref<string | null>(null);
     const showDebugInfo = ref(false);
     const debugData = ref<string>('');
 
@@ -235,14 +249,14 @@ export default defineComponent({
           rawData?: any;
           error?: string 
         }>({
-          type: 'SOURCES_TREE_SCAN'
+          type: MessageType.SOURCES_TREE_SCAN
         });
 
         if (!response?.success) {
           throw new Error(response?.error || '扫描失败');
         }
 
-        console.log('[SourcesDownloadPanel] Received tree:', response.tree);
+        log.debug('Received tree:', response.tree);
         
         // 保存调试数据
         if (response.rawData) {
@@ -281,6 +295,7 @@ export default defineComponent({
       downloading.value = true;
       downloadProgress.value = 0;
       error.value = null;
+      notice.value = null;
 
       try {
         // 收集所有选中的文件节点
@@ -294,8 +309,13 @@ export default defineComponent({
         }
 
         // 发送到background处理
-        const response = await sendRuntimeMessage<{ success: boolean; taskId?: string; error?: string }>({
-          type: 'SOURCES_TREE_DOWNLOAD',
+        const response = await sendRuntimeMessage<{
+          success: boolean;
+          taskId?: string;
+          error?: string;
+          skipped?: { count: number; text: string } | null;
+        }>({
+          type: MessageType.SOURCES_TREE_DOWNLOAD,
           files: selectedNodes.map(n => ({
             path: n.path,
             url: n.url,
@@ -311,6 +331,9 @@ export default defineComponent({
         if (response.taskId) {
           await pollDownloadProgress(response.taskId);
         }
+
+        // 后台已如实报出未入包项：完成也要让用户知道压缩包少了什么
+        if (response.skipped?.count) notice.value = response.skipped.text;
       } catch (e: any) {
         error.value = e?.message || '下载失败';
       } finally {
@@ -335,7 +358,7 @@ export default defineComponent({
             success: boolean; 
             task?: { progress: number; status: string; error?: string } 
           }>({
-            type: 'SOURCES_DOWNLOAD_STATUS',
+            type: MessageType.SOURCES_DOWNLOAD_STATUS,
             taskId
           });
 
@@ -360,7 +383,7 @@ export default defineComponent({
           attempts++;
           setTimeout(poll, 1000);
         } catch (e) {
-          console.error('[SourcesDownload] Poll error:', e);
+          log.error('Poll error:', e);
           downloading.value = false;
           downloadProgress.value = 0;
           error.value = '获取下载状态失败';
@@ -371,6 +394,7 @@ export default defineComponent({
     }
 
     return {
+      PANEL_TITLES,
       tree,
       expandedNodes,
       selectedFiles,
@@ -378,6 +402,7 @@ export default defineComponent({
       downloading,
       downloadProgress,
       error,
+      notice,
       totalFiles,
       selectedCount,
       hasSelection,
@@ -414,33 +439,14 @@ export default defineComponent({
 }
 
 .selection-info {
-  font-size: 11px;
+  /* UI 三批（组2）：选中计数属状态正文文字 11px → 12px */
+  font-size: 12px;
   color: var(--sp-color-primary);
   font-weight: 500;
 }
 
-.error-banner {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 10px 12px;
-  background: var(--sp-color-danger-light);
-  border: 1px solid rgba(239, 68, 68, 0.25);
-  border-radius: var(--sp-radius-md);
-  margin-bottom: 10px;
-}
-
-.error-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--sp-color-danger);
-}
-
-.error-message {
-  font-size: 11px;
-  color: var(--sp-color-danger);
-  opacity: 0.8;
-}
+/* UI 三批（组1）：.error-banner/.error-title/.error-message 本地样式随错误横幅
+   收敛共享 ErrorBanner 组件一并删除 */
 
 .progress-container {
   margin-bottom: 12px;
@@ -458,12 +464,14 @@ export default defineComponent({
 }
 
 .progress-label {
-  font-size: 11px;
+  /* UI 三批（组2）：下载状态文字 11px → 12px */
+  font-size: 12px;
   color: var(--sp-color-text-secondary);
 }
 
 .progress-percent {
-  font-size: 11px;
+  /* UI 三批（组2）：进度百分比属状态文字 11px → 12px */
+  font-size: 12px;
   font-weight: 600;
   color: var(--sp-color-primary);
   font-family: var(--sp-font-mono, monospace);

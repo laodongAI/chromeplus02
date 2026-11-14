@@ -19,6 +19,9 @@ describe('restrictedPages', () => {
 
   it('应用店页面受限', () => {
     expect(isRestrictedPage('https://chromewebstore.google.com/detail/x/abc')).toBe(true);
+    // 规则去重回归（P2-5）：删除重复的第 6 条后，旧版应用店 URL 仍必须被第 5 条覆盖
+    expect(isRestrictedPage('https://chrome.google.com/webstore/detail/x/abc')).toBe(true);
+    expect(isRestrictedPage('https://chromewebstore.google.cn/detail/x/abc')).toBe(true);
   });
 
   it('本扩展自身页面：给出专属指引而非"其它扩展"误报', () => {

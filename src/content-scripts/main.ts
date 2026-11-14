@@ -4,6 +4,5 @@
  */
 import { initContentScript } from './router';
 
-// 始终初始化，以支持扩展重载后的重新注入
-// 注意：initContentScript 内部应处理重复监听器的问题（如使用具名函数或清理逻辑）
+// 重复注入由 initContentScript 内的隔离世界标记拦截；扩展重载后世界重建，可正常重新初始化
 initContentScript();

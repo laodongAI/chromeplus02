@@ -1,4 +1,4 @@
-import { buildUnifiedMediaKey } from '../utils/mediaKeys';
+import { buildUnifiedMediaKey } from '@/utils/mediaKeys';
 
 interface RegistryState {
   processed: Set<string>;

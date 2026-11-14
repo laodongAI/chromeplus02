@@ -1,9 +1,13 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+/* UI 三批（组5）：移除 Google Fonts 远程 @import。
+   离线/弱网首开时远程字体会先回退再闪烁重排，且商店审核对扩展页远程资源敏感；
+   改为纯系统字体栈（Windows 走 Segoe UI / 中文走微软雅黑，macOS 走苹方），零网络依赖。 */
 
 :root {
   color-scheme: light;
-  --sp-font-family: 'Inter', 'PingFang SC', 'Microsoft Yahei', -apple-system, sans-serif;
-  --sp-font-mono: 'JetBrains Mono', 'Cascadia Code', monospace;
+  /* 系统字体栈：西文 Segoe UI/-apple-system，中文 苹方/微软雅黑/思源黑体 */
+  --sp-font-family: -apple-system, 'Segoe UI', 'PingFang SC', 'Noto Sans CJK SC', 'Microsoft YaHei', Roboto, sans-serif;
+  /* 等宽栈：本地常见等宽字体（Cascadia/Consolas/SF Mono/Menlo），不再依赖 JetBrains Mono 远程加载 */
+  --sp-font-mono: 'Cascadia Mono', Consolas, 'SF Mono', Menlo, 'Liberation Mono', monospace;
 
   /* ── Light theme backgrounds ── */
   --sp-color-bg:           #f5f6fa;
@@ -20,11 +24,15 @@
   --sp-color-border-strong: rgba(0,0,0,0.12);
   --sp-color-border-hover:  rgba(0,0,0,0.18);
 
-  /* ── Text ── */
+  /* ── Text ──
+     UI 三批（组2）可读性修正：旧 muted #9ca3af 在 #f5f6fa 上对比度仅约 2.5:1，
+     低于 WCAG AA 正文 4.5:1，而它正是所有 hint/状态/元信息的载体色。
+     现值经 tests/unit/designTokens.test.ts 断言：muted 在 bg/surface/card 三种底色上均 ≥4.5:1。
+     层级：heading > text > text-secondary（信息性次要文字）> muted（弱化但仍达 AA）。 */
   --sp-color-text:          #374151;
-  --sp-color-text-secondary:#6b7280;
+  --sp-color-text-secondary:#5b6472;
   --sp-color-heading:       #111827;
-  --sp-color-muted:         #9ca3af;
+  --sp-color-muted:         #626b80;
 
   /* ── Brand / Primary — violet-indigo ── */
   --sp-color-primary:       #6366f1;
@@ -41,6 +49,30 @@
   --sp-color-danger:        #ef4444;
   --sp-color-danger-light:  rgba(239,68,68,0.10);
   --sp-color-info:          #06b6d4;
+
+  /* ── 品牌渐变副色（UI 三批·组6）：logo/编辑器渐变统一引用，避免 #8b5cf6/#9b59ff 各写一处 ── */
+  --sp-brand-violet:        #8b5cf6;
+
+  /* ── 站点分类色（UI 三批·组2）：SiteCatalogPanel 的 JS 硬编码色全部收进 token，
+     深色模式在下方 [data-theme='dark'] 中整体随动（前景提亮、底色加深）。
+     浅色前景色统一取各色系 600-700 档：保证落在 #f5f6fa 页面底上 ≥4.5:1（AA），
+     由 tests/unit/designTokens.test.ts 逐分类断言，防止后续调色跌破阈值 ── */
+  --sp-cat-general-bg:  rgba(99,102,241,0.12);   --sp-cat-general-fg:  #4f46e5;
+  --sp-cat-entertain-bg: rgba(236,72,153,0.12);  --sp-cat-entertain-fg: #be185d;
+  --sp-cat-learn-bg:    rgba(16,185,129,0.12);   --sp-cat-learn-fg:    #047857;
+  --sp-cat-english-bg:  rgba(245,158,11,0.14);   --sp-cat-english-fg:  #b45309;
+  --sp-cat-music-bg:    rgba(139,92,246,0.12);   --sp-cat-music-fg:    #7c3aed;
+  --sp-cat-live-bg:     rgba(239,68,68,0.12);    --sp-cat-live-fg:     #b91c1c;
+  --sp-cat-news-bg:     rgba(6,182,212,0.12);    --sp-cat-news-fg:     #0e7490;
+
+  /* ── 错误码徽章色（UI 三批·组2）：ErrorBadge 各错误类型的底色/前景收进 token ── */
+  --sp-err-bg:            #5b1f24;  --sp-err-fg:            #ffb4b4;
+  --sp-err-network-bg:    #402317;  --sp-err-network-fg:    #ffcfb4;
+  --sp-err-cors-bg:       #3d1f40;  --sp-err-cors-fg:       #f2b4ff;
+  --sp-err-drm-bg:        #2e1f5b;  --sp-err-drm-fg:        #d4c3ff;
+  --sp-err-permission-bg: #5b3d1f;  --sp-err-permission-fg: #ffd9b4;
+  --sp-err-noresource-bg: #3b4a55;  --sp-err-noresource-fg: #cdd9e5;
+  --sp-err-interrupt-bg:  #5b1f24;  --sp-err-interrupt-fg:  #ffb4b4;
 
   /* ── Shadows — subtle on white ── */
   --sp-shadow-sm:   0 1px 2px rgba(0,0,0,0.06), 0 1px 4px rgba(0,0,0,0.04);
@@ -90,10 +122,30 @@
   --sp-color-border-strong: rgba(255,255,255,0.14);
   --sp-color-border-hover:  rgba(255,255,255,0.22);
 
+  /* UI 三批（组2）：暗色下旧 muted #6b7280 在 #14161d 上仅约 3.8:1，同样不达 AA；
+     整体提亮一档并保持 heading > text > secondary > muted 的弱化层级 */
   --sp-color-text:          #d1d5db;
-  --sp-color-text-secondary:#9ca3af;
+  --sp-color-text-secondary:#b0b7c3;
   --sp-color-heading:       #f3f4f6;
-  --sp-color-muted:         #6b7280;
+  --sp-color-muted:         #9aa4b2;
+
+  /* 站点分类色暗色随动：前景提亮保证深底可读，底色加深透明度避免过曝 */
+  --sp-cat-general-bg:  rgba(129,140,248,0.18);  --sp-cat-general-fg:  #a5b0fc;
+  --sp-cat-entertain-bg: rgba(244,114,182,0.16); --sp-cat-entertain-fg: #f9a8d4;
+  --sp-cat-learn-bg:    rgba(52,211,153,0.16);   --sp-cat-learn-fg:    #6ee7b7;
+  --sp-cat-english-bg:  rgba(251,191,36,0.16);   --sp-cat-english-fg:  #fcd34d;
+  --sp-cat-music-bg:    rgba(167,139,250,0.16);  --sp-cat-music-fg:    #c4b5fd;
+  --sp-cat-live-bg:     rgba(248,113,113,0.16);  --sp-cat-live-fg:     #fca5a5;
+  --sp-cat-news-bg:     rgba(34,211,238,0.16);   --sp-cat-news-fg:     #67e8f9;
+
+  /* 错误码徽章暗色随动：底色与暗卡接近时前景再提亮一档 */
+  --sp-err-bg:            #6b2429;  --sp-err-fg:            #ffc9c9;
+  --sp-err-network-bg:    #4d2c1d;  --sp-err-network-fg:    #ffd9c9;
+  --sp-err-cors-bg:       #49264d;  --sp-err-cors-fg:       #f7c9ff;
+  --sp-err-drm-bg:        #38266b;  --sp-err-drm-fg:        #ddccff;
+  --sp-err-permission-bg: #6b4926;  --sp-err-permission-fg: #ffe4c9;
+  --sp-err-noresource-bg: #465866;  --sp-err-noresource-fg: #dde7f2;
+  --sp-err-interrupt-bg:  #6b2429;  --sp-err-interrupt-fg:  #ffc9c9;
 
   /* 暗色下主色提亮一档保证对比度 */
   --sp-color-primary:       #818cf8;
