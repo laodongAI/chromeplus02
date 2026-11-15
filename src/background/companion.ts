@@ -7,6 +7,7 @@
 import { registerBgHandler } from './bus';
 import { MessageType } from '@/messaging';
 import { createLogger } from '@/utils/logger';
+import { isSafeRemoteUrl } from '@/core/externalTools';
 
 /** 本模块 logger：记录伴生程序连接状态、下载派发与桌面标注控制等里程碑 */
 const log = createLogger('bg.companion');
@@ -219,6 +220,8 @@ export async function downloadWithCompanion(
   url: string,
   onProgress?: (pct: number) => void
 ): Promise<{ ok: boolean; error?: string; file?: string }> {
+  // 与 download_ext 同一道闸门：URL 来自网页，含双引号即可闭合 host 侧的引号注入额外 yt-dlp 参数
+  if (!isSafeRemoteUrl(url)) return { ok: false, error: '极速下载只接受 http/https 资源地址' };
   const online = await ensureCompanion();
   if (!online || !port) return { ok: false, error: '伴生程序未安装或未响应' };
   const reqId = ++reqSeq;

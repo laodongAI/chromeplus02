@@ -51,6 +51,15 @@ function Build-ArgLine([string[]]$argList) {
   return (($argList | ForEach-Object { Quote-Arg $_ }) -join ' ')
 }
 
+# URL 闸门：与扩展侧 isSafeRemoteUrl 同口径。host 是 CreateProcess 前最后一道，
+# 扩展侧漏检时这里必须独立拦住——双引号能闭合引号，把额外参数塞给 yt-dlp/ffmpeg。
+function Test-SafeRemoteUrl([string]$url) {
+  if ([string]::IsNullOrEmpty($url)) { return $false }
+  if ($url -notmatch '^https?://') { return $false }
+  if ($url -match '[\x00-\x1f\x7f"]') { return $false }
+  return $true
+}
+
 function Send-Json($obj) {
   $json = [Text.Encoding]::UTF8.GetBytes(($obj | ConvertTo-Json -Compress -Depth 5))
   $len = [BitConverter]::GetBytes([UInt32]$json.Length)
@@ -206,8 +215,8 @@ while ($true) {
       continue
     }
     $url = [string]$msg.url
-    if ($url -notmatch '^https?://') {
-      Send-Json @{ type = 'error'; reqId = $reqId; message = '外挂工具只接受 http/https 地址' }
+    if (-not (Test-SafeRemoteUrl $url)) {
+      Send-Json @{ type = 'error'; reqId = $reqId; message = '外挂工具只接受 http/https 地址，且不得含双引号或控制字符' }
       continue
     }
     $exe = Find-Tool $tool
@@ -257,19 +266,33 @@ while ($true) {
 
   if ($type -eq 'download') {
     $reqId = [int]$msg.reqId
+    $url = [string]$msg.url
+    if (-not (Test-SafeRemoteUrl $url)) {
+      Send-Json @{ type = 'error'; reqId = $reqId; message = '极速下载只接受 http/https 地址，且不得含双引号或控制字符' }
+      continue
+    }
     if (-not (Test-Path $ytdlp)) {
       Send-Json @{ type = 'error'; reqId = $reqId; message = '未找到 bin\yt-dlp.exe，请按 README.md 放入后重试' }
       continue
     }
     try { New-Item -ItemType Directory -Force -Path $outDir | Out-Null } catch { }
 
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = $ytdlp
-    $psi.Arguments = "--newline --no-playlist --progress-template `"download:PROGRESS `$(progress._percent_str)`" -P `"$outDir`" `"$($msg.url)`""
-    $psi.RedirectStandardOutput = $true
-    $psi.UseShellExecute = $false
-    $psi.CreateNoWindow = $true
     try {
+      # argv 数组 + Build-ArgLine：与 download_ext 同一套转义，绝不把 URL 插值进命令行字符串。
+      # 进度模板用单引号保持字面量，$(...) 是 yt-dlp 自己的模板语法，不该被 PowerShell 求值。
+      $ytArgs = @(
+        '--newline',
+        '--no-playlist',
+        '--progress-template', 'download:PROGRESS $(progress._percent_str)',
+        '-P', $outDir,
+        $url
+      )
+      $psi = New-Object System.Diagnostics.ProcessStartInfo
+      $psi.FileName = $ytdlp
+      $psi.Arguments = Build-ArgLine ([string[]]$ytArgs)
+      $psi.RedirectStandardOutput = $true
+      $psi.UseShellExecute = $false
+      $psi.CreateNoWindow = $true
       $proc = [System.Diagnostics.Process]::Start($psi)
       while (-not $proc.StandardOutput.EndOfStream) {
         $line = $proc.StandardOutput.ReadLine()

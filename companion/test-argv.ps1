@@ -8,8 +8,8 @@ $tokens = $null; $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($hostPath, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw 'host.ps1 parse failed' }
 
-# 只取出两个纯函数，不执行 host 的消息循环
-foreach ($name in @('Quote-Arg', 'Build-ArgLine')) {
+# 只取出纯函数，不执行 host 的消息循环
+foreach ($name in @('Quote-Arg', 'Build-ArgLine', 'Test-SafeRemoteUrl')) {
   $fn = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)
   if (-not $fn) { throw "function not found: $name" }
   Invoke-Expression $fn.Extent.Text
@@ -92,7 +92,9 @@ $accept = @(
   @('a b\c'),
   @('-headers', ('Referer: https://a/b' + $cr + $lf + 'User-Agent: Mozilla/5.0 (X11; Linux)' + $cr + $lf)),
   @('--input-url', 'https://a.com/v.m3u8', '--save-name', '视频 名字', '--auto-select'),
-  @('-hide_banner', '-loglevel', 'error', '-y', '-i', 'https://a.com/v.mp4', '-c', 'copy', 'out.mp4')
+  @('-hide_banner', '-loglevel', 'error', '-y', '-i', 'https://a.com/v.mp4', '-c', 'copy', 'out.mp4'),
+  # yt-dlp 极速下载：进度模板含空格与 $()，输出目录可能含空格（用户名带空格）
+  @('--newline', '--no-playlist', '--progress-template', 'download:PROGRESS $(progress._percent_str)', '-P', 'C:\Users\Zhang San\Downloads\MediaPlus', 'https://www.youtube.com/watch?v=abc')
 )
 $reject = @(
   @('a"b'),
@@ -125,8 +127,32 @@ foreach ($case in $reject) {
   if (-not $threw) { $fail++; Write-Output ('FAIL not rejected: [' + ($case -join '|') + ']') }
 }
 
+# URL 闸门：host 是 CreateProcess 前最后一道，扩展侧漏检时必须独立拦住
+$urlAccept = @(
+  'https://cdn.example.com/a.mp4',
+  'http://127.0.0.1:8080/a.m3u8',
+  'https://www.youtube.com/watch?v=abc&t=1'
+)
+$urlReject = @(
+  '',
+  'file:///C:/secret.txt',
+  'blob:https://site/uuid',
+  'chrome-extension://id/a.mp4',
+  'not a url',
+  'https://a.com/x.mp4"',
+  'https://a.com/x.mp4" --exec "calc.exe',
+  "https://a.com/x.mp4`n--evil",
+  "https://a.com/x.mp4`t"
+)
+foreach ($u in $urlAccept) {
+  if (-not (Test-SafeRemoteUrl $u)) { $fail++; Write-Output ('FAIL url rejected: ' + $u) }
+}
+foreach ($u in $urlReject) {
+  if (Test-SafeRemoteUrl $u) { $fail++; Write-Output ('FAIL url accepted: ' + $u) }
+}
+
 if ($fail -eq 0) {
-  Write-Output ('ARGV_OK ' + $accept.Count + ' accept (both oracles) + ' + $reject.Count + ' reject')
+  Write-Output ('ARGV_OK ' + $accept.Count + ' accept (both oracles) + ' + $reject.Count + ' reject + url ' + $urlAccept.Count + ' accept/' + $urlReject.Count + ' reject')
 } else {
   Write-Output ('ARGV_FAILED ' + $fail)
   exit 1
