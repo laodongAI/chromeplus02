@@ -56,11 +56,6 @@ export function setLogLevel(level: LogLevel): void {
   currentLevel = level;
 }
 
-/** 读取当前生效级别（诊断/测试用） */
-export function getLogLevel(): LogLevel {
-  return currentLevel;
-}
-
 // 启动时尝试从 storage 读取运行时级别覆盖（fire-and-forget，失败静默用默认值）。
 // 内容脚本/后台/侧栏三个上下文都会各自执行一次读取，互不干扰。
 try {

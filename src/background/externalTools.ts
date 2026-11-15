@@ -63,11 +63,6 @@ export function initExternalToolsSettings(): void {
   } catch { /* noop：读不到设置即保持默认关闭 */ }
 }
 
-/** 供 downloads.ts 判断是否启用（不触发探测） */
-export function externalToolsEnabled(): boolean {
-  return config.enabled;
-}
-
 /**
  * 某类任务当前会走哪个外挂工具；返回 null 表示直接走内置链路。
  * 队列侧用它做前置判断，避免每次任务都调用一次带网络探测的下载入口。

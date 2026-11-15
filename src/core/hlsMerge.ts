@@ -56,15 +56,3 @@ export function mergeBlobParts(parts: BlobPart[], type: HlsMergeType): MergedMed
 export function mergeSegments(parts: Uint8Array[], type: HlsMergeType): MergedMedia {
   return mergeBlobParts(parts as BlobPart[], type);
 }
-
-/** 将多个分片按序拼为单个 Uint8Array（转封装器需要整段连续数据） */
-export function concatBytes(parts: Uint8Array[]): Uint8Array {
-  const total = parts.reduce((s, p) => s + p.byteLength, 0);
-  const out = new Uint8Array(total);
-  let offset = 0;
-  for (const p of parts) {
-    out.set(p, offset);
-    offset += p.byteLength;
-  }
-  return out;
-}

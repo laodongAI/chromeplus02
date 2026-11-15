@@ -99,7 +99,3 @@ export async function loadAIConfig(): Promise<AIModelConfig> {
     } catch { resolve({ ...DEFAULT_AI }); }
   });
 }
-
-export function applyLocalPatch(current: ExtensionSettings, patch: Partial<ExtensionSettings>): ExtensionSettings {
-  return { ...current, ...patch };
-}

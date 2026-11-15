@@ -224,11 +224,3 @@ export function initCaptureRecordingHandlers(): void {
 
   log.info('录制产物交接处理器已注册');
 }
-
-/**
- * 供侧栏直连 IDB 取 Blob 的键名生成（保持前缀单一来源，侧栏不硬编码）。
- * @param recordId 录制 id
- */
-export function caprecIdbKey(recordId: string): string {
-  return CAPREC_IDB_PREFIX + recordId;
-}

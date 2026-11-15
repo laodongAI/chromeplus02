@@ -10,8 +10,8 @@
 import type { ArticleBlock } from '@/core/articleBlocks';
 import { blocksToMarkdown } from '@/core/articleBlocks';
 import { buildMarkdownDoc, type FrontmatterData } from '@/core/frontmatter';
-import { appendHighlight, isSamePage, locateAnchor, newHighlightId, normalizePageUrl, type StoredHighlight } from '@/core/textHighlight';
-import { buildArchiveHtml, flattenBlocks, type ArchiveHighlight, type ArchiveMeta } from '@/core/archive';
+import { appendHighlight, locateAnchor, newHighlightId, normalizePageUrl, type StoredHighlight } from '@/core/textHighlight';
+import { flattenBlocks, type ArchiveHighlight, type ArchiveMeta } from '@/core/archive';
 import { formatFilename } from '@/utils/format';
 import { MessageType, type TextContentDTO } from '@/messaging';
 import { sendMessageToTab } from '../utils/chromeMessaging';
@@ -181,7 +181,7 @@ export function buildFrontmatter(content: TextContentDTO, highlights: StoredHigh
 }
 
 /** Markdown 出口：frontmatter + 结构化正文 +（有则）高亮批注附录 */
-export function buildMarkdown(content: TextContentDTO, highlights: StoredHighlight[], template?: string): string {
+export function buildMarkdown(content: TextContentDTO, highlights: StoredHighlight[]): string {
   const blocks = Array.isArray(content.blocks) ? content.blocks : [];
   const body = blocks.length ? blocksToMarkdown(blocks) : String(content.textContent || '');
   const data = buildFrontmatter(content, highlights);
@@ -291,9 +291,4 @@ export function downloadText(text: string, fileName: string, mime: string): void
     void chrome.runtime.lastError;
     setTimeout(() => { try { URL.revokeObjectURL(url); } catch { /* noop */ } }, 60_000);
   });
-}
-
-/** 同一页面的判定（面板切换标签后决定要不要重新读高亮） */
-export function isSameDocument(a: string, b: string): boolean {
-  return isSamePage(a, b);
 }

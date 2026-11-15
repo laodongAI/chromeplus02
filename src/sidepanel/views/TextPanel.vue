@@ -264,7 +264,7 @@ export default defineComponent({
       if (!content.value || exporting.value) return;
       exporting.value = 'md';
       try {
-        const md = buildMarkdown(content.value, highlights.value, template.value);
+        const md = buildMarkdown(content.value, highlights.value);
         const name = docFilename(content.value, 'md', template.value);
         downloadText(md, name, 'text/markdown');
         exportHint.value = `已下载 ${name}`;

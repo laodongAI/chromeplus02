@@ -69,6 +69,8 @@ const SAFE_URL_RE = /^(?:https?:|data:image\/|mailto:)/i;
 export function sanitizeArchiveUrl(raw: string): string {
   const u = String(raw ?? '').trim();
   if (!u) return '';
+  // 控制字符正是这里要剥掉的东西（`java\tscript:` 绕过），不是误写进正则的脏字符
+  // eslint-disable-next-line no-control-regex
   const stripped = u.replace(/[\u0000-\u001f\u007f]/g, '');
   if (!SAFE_URL_RE.test(stripped.replace(/\s/g, ''))) return '';
   return stripped.replace(/"/g, '%22').replace(/</g, '%3C').replace(/>/g, '%3E').replace(/\s/g, '%20');

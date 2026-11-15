@@ -205,11 +205,6 @@ export async function ensureCompanion(force = false): Promise<boolean> {
   return ok;
 }
 
-/** 缓存查询（不触发连接） */
-export function companionLikelyOnline(): boolean {
-  return onlineNow() && Date.now() - checkedAt < STATUS_TTL_MS;
-}
-
 function disconnect(): void {
   try { port?.disconnect(); } catch { /* noop */ }
   port = null;
