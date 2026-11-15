@@ -20,6 +20,7 @@ import { initWebRtcCaptureHandlers } from './webrtcCapture';
 import { initExternalToolsHandlers } from './externalTools';
 // 页面录制产物交接（内容脚本分块上送 → IDB 持久化 → 侧栏"录制成果"列表）
 import { initCaptureRecordingHandlers } from './captureRecording';
+import { initCommands } from './commands';
 // P1-8：分级日志（SW 上下文默认 info 级）
 import { createLogger } from '@/utils/logger';
 
@@ -44,6 +45,8 @@ initExternalToolsHandlers();
 initCaptureRecordingHandlers();
 // WebRTC 录流：开关驱动的动态注入 + 远端流清单 + 录制归属裁定（产物复用上面的交接链路）
 initWebRtcCaptureHandlers();
+// 全局快捷键：画笔工具栏显隐 + 录制暂停/停止（页内按键在录其他应用时够不着）
+initCommands();
 
 /**
  * 初始化侧边栏打开行为：点击扩展图标即打开侧边栏（README 承诺的交互）。

@@ -116,6 +116,12 @@ export const visual = ref<RecordingVisualOptions>({
 });
 /** 供面板预览的原始采集流（框选遮挡区用；shallowRef 避免 Vue 深度代理 MediaStream） */
 export const previewStream = shallowRef<MediaStream | null>(null);
+/**
+ * 摄像头原始流，供录制中的画中画自view。
+ * 画中画是画进视频轨的，页面上没有任何可见浮窗——不给自view的话，
+ * 用户开了开关也看不到自己，只能回放成片才知道到底有没有生效。
+ */
+export const cameraPreviewStream = shallowRef<MediaStream | null>(null);
 
 /* ────────────── 模块级运行时对象（非响应式，仅 store 内部持有） ────────────── */
 
@@ -317,10 +323,12 @@ export async function startRecording(params: RecordingStartParams): Promise<void
         previewStream.value = stream;
         cameraActive.value = !!(cameraStream && pipOptions.enabled);
         cameraPip.value = cameraActive.value ? pipOptions : null;
+        cameraPreviewStream.value = cameraActive.value ? cameraStream : null;
         // 摄像头中途失效（拔设备/撤权限）：合成轨不能换，只停止画摄像头
         cameraStream?.getVideoTracks()[0]?.addEventListener('ended', () => {
           cameraActive.value = false;
           cameraPip.value = null;
+          cameraPreviewStream.value = null;
           visual.value = { ...visual.value, camera: { ...visual.value.camera, enabled: false } };
           compositor?.update(visual.value);
           toast.info('摄像头已断开，画面继续录制（不再含画中画）');
@@ -333,6 +341,7 @@ export async function startRecording(params: RecordingStartParams): Promise<void
         previewStream.value = null;
         cameraActive.value = false;
         cameraPip.value = null;
+        cameraPreviewStream.value = null;
         cameraStream?.getTracks().forEach(t => { try { t.stop(); } catch { /* noop */ } });
         cameraStream = null;
       }
@@ -457,6 +466,38 @@ export function togglePause(): void {
     log.info('暂停录制，计时冻结于 ' + elapsedSeconds.value + 's');
   }
   paused.value = !paused.value;
+}
+
+/* ────────────── 全局快捷键命令（chrome.commands → 背景 → 侧栏） ────────────── */
+
+/** 命令监听是否已安装（幂等；安装后不摘除——切走 Tab 录制仍在继续，快捷键必须一直可用） */
+let commandListenerInstalled = false;
+
+/**
+ * 安装录制控制命令监听。由录制面板挂载时调用一次。
+ * 侧栏整体关闭时本上下文销毁，录制也随之结束，所以不存在「命令到了但没人处理」的中间态。
+ */
+export function installRecordingCommandListener(): void {
+  if (commandListenerInstalled) return;
+  commandListenerInstalled = true;
+  if (!chrome?.runtime?.onMessage?.addListener) {
+    log.debug('非扩展运行环境（chrome.runtime 不可用），跳过录制命令监听安装');
+    return;
+  }
+  chrome.runtime.onMessage.addListener((msg: unknown) => {
+    const m = msg as { type?: string; action?: string };
+    if (m?.type !== MessageType.RECORDING_COMMAND) return;
+    if (!recording.value) {
+      log.debug('收到录制命令但当前无进行中的录制，忽略');
+      return;
+    }
+    if (m.action === 'toggle-pause') {
+      togglePause();
+      toast.info(paused.value ? '已暂停录制（Alt+Shift+P 继续）' : '已继续录制');
+    } else if (m.action === 'stop') {
+      stopRecording();
+    }
+  });
 }
 
 /* ────────────── 按住说话 / 画中画（Round 5 #31） ────────────── */
@@ -648,6 +689,7 @@ function releaseStream(): void {
   previewStream.value = null;
   cameraActive.value = false;
   cameraPip.value = null;
+  cameraPreviewStream.value = null;
   visual.value = { camera: { ...DEFAULT_CAMERA_PIP }, zoom: ZOOM_MIN, anchor: 'center', blurRegions: [], blurStrength: BLUR_STRENGTH_DEFAULT };
   // 合成流与原始流共享同一批轨道对象，去重后每条只停一次
   const tracks = new Set<MediaStreamTrack>();

@@ -18,7 +18,7 @@ import { buildUnifiedMediaKey } from '@/utils/mediaKeys';
 // P1-8：分级日志（内容脚本默认 warn 以上才输出，宿主页面控制台不再被 debug/info 刷屏）
 import { createLogger } from '@/utils/logger';
 import { initTextExtractor } from './text';
-import { toggleAnnotate } from './annotate';
+import { toggleAnnotate, toggleAnnotateToolbar } from './annotate';
 import { toggleCursorHighlight } from './cursorHighlight';
 
 /** 本模块 logger：保留原 `[content/router]` 前缀语义 */
@@ -236,6 +236,16 @@ export function initContentScript() {
           sendResponse({ success: true });
         } catch (e: unknown) {
           sendResponse({ success: false, error: (e as Error)?.message || '画笔工具切换失败' });
+        }
+        break;
+      }
+      case MessageType.ANNOTATE_TOOLBAR_TOGGLE: {
+        // 全局快捷键（Alt+Shift+H）驱动的工具栏显隐：覆盖层没开时是空操作，不凭空创建画笔层
+        try {
+          toggleAnnotateToolbar();
+          sendResponse({ success: true });
+        } catch (e: unknown) {
+          sendResponse({ success: false, error: (e as Error)?.message || '工具栏显隐切换失败' });
         }
         break;
       }

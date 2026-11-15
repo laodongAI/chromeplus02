@@ -3,11 +3,15 @@
  *  - 工具：画笔 / 荧光笔 / 橡皮擦 / 文字 / 矩形 / 直线 / 箭头
  *  - 颜色 5 种；粗细 1-12px；白板背景（透明 / 白 / 黑）；撤销 / 清空
  *  - 画布 fixed 全屏，绘制内容会被 getDisplayMedia 录入视频
- *  - 键盘快捷键：H 隐藏/显示工具栏（录屏时不出现）；空格 切换「绘制 / 操作」模式
- *  - 默认处于绘制模式（接管指针），「操作模式」下放行页面点击
+ *  - 键盘快捷键：H 隐藏/显示工具栏（两种模式都生效，录屏时不出现）；
+ *    空格 切换「绘制 / 操作」模式（仅绘制模式生效，操作模式下空格属于页面）
+ *  - 默认处于操作模式（放行页面点击），选一个画笔工具即自动进入绘制模式
+ *  - 判定逻辑在 @/core/annotateHotkeys（可单测）；另有扩展级全局快捷键见 manifest commands
  */
 
 import { createLogger } from '@/utils/logger';
+import { resolveAnnotateKey } from '@/core/annotateHotkeys';
+import { isEditableTarget } from '@/core/recordingAudio';
 
 /** 本模块 logger：记录覆盖层开关、模式/工具切换等里程碑（支持 debug/info/warn/error 级别） */
 const log = createLogger('content/annotate');
@@ -273,6 +277,15 @@ function toggleToolbar(force?: boolean): void {
 }
 
 /**
+ * 供扩展级全局快捷键（chrome.commands）驱动的工具栏显隐。
+ * 覆盖层未开启时什么都不做——快捷键不该凭空造出一个画笔层。
+ */
+export function toggleAnnotateToolbar(): void {
+  if (!root) return;
+  toggleToolbar();
+}
+
+/**
  * 切换「绘制 / 操作」模式。
  * 操作模式下画布不再接管指针，可以正常点击网页。
  * @param value 目标状态
@@ -282,7 +295,7 @@ function setSelectMode(value: boolean): void {
   applyPointerMode();
   syncToolButtons();
   log.info(`切换为${selectMode ? '操作' : '绘制'}模式（${selectMode ? '放行页面点击' : '画布接管指针'}）`);
-  showHint(selectMode ? '操作模式：网页可正常点击；选一个画笔工具即可书写' : '绘制模式：在页面上书写（空格切回操作，H 隐藏工具栏）');
+  showHint(selectMode ? '操作模式：网页可正常点击（H 仍可隐藏工具栏）；选一个画笔工具即可书写' : '绘制模式：在页面上书写（空格切回操作，H 隐藏工具栏）');
 }
 
 /** 根据模式设置画布指针事件与光标样式 */
@@ -365,7 +378,7 @@ function buildToolbar(): HTMLDivElement {
   syncBgButton();
 
   // 操作模式开关
-  selectBtn = button('🖱 操作模式', () => setSelectMode(!selectMode), false, '临时放行页面点击（快捷键 空格）');
+  selectBtn = button('🖱 操作模式', () => setSelectMode(!selectMode), false, '临时放行页面点击（绘制模式下按空格切换）');
   bar.appendChild(selectBtn);
 
   // 撤销 / 清空 / 关闭
@@ -375,7 +388,7 @@ function buildToolbar(): HTMLDivElement {
 
   // 快捷键说明
   const tip = document.createElement('span');
-  tip.textContent = 'H 隐藏工具栏 · 空格 切操作';
+  tip.textContent = 'H 隐藏工具栏 · 空格 切操作（绘制模式）';
   css(tip, { color: '#94a3b8', fontSize: '11px', whiteSpace: 'nowrap' });
   bar.appendChild(tip);
 
@@ -486,24 +499,25 @@ export function toggleAnnotate(on: boolean): void {
     setTimeout(() => input.focus(), 0);
   }
 
-  // 快捷键：H 隐藏工具栏、空格切换操作/绘制。
-  // 仅在绘制模式或焦点落在覆盖层内时生效——操作模式下用户正在操作网页，
-  // 空格是滚动/播放暂停、H 可能是站点自身快捷键，全局劫持会破坏页面交互。
+  // 快捷键判定抽到 @/core/annotateHotkeys：H 两种模式都生效（工具栏会进画面，必须随时能藏），
+  // 空格只在绘制模式生效（操作模式下它是页面滚动/播放暂停，抢键会破坏正在录制的操作）。
   keyHandler = (e: KeyboardEvent) => {
     if (!root) return;
     const target = e.target as HTMLElement | null;
-    // 文字输入场景内不拦截按键
-    if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) return;
-    if (selectMode && !root.contains(document.activeElement)) return;
-    if (e.key === 'h' || e.key === 'H') {
-      e.preventDefault();
-      e.stopPropagation();
-      toggleToolbar();
-    } else if (e.key === ' ') {
-      e.preventDefault();
-      e.stopPropagation();
-      setSelectMode(!selectMode);
-    }
+    const action = resolveAnnotateKey({
+      key: e.key,
+      ctrlKey: e.ctrlKey,
+      altKey: e.altKey,
+      metaKey: e.metaKey,
+      selectMode,
+      focusInOverlay: root.contains(document.activeElement),
+      editableTarget: isEditableTarget(target?.tagName, !!target?.isContentEditable)
+    });
+    if (!action) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (action === 'toolbar') toggleToolbar();
+    else setSelectMode(!selectMode);
   };
   window.addEventListener('keydown', keyHandler, true);
 

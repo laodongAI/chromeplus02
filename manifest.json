@@ -34,6 +34,20 @@
   "side_panel": {
     "default_path": "src/sidepanel/index.html"
   },
+  "commands": {
+    "annotate-toolbar": {
+      "suggested_key": { "default": "Alt+Shift+H" },
+      "description": "显示/隐藏录屏画笔工具栏（隐藏后工具栏不会出现在录像里）"
+    },
+    "record-toggle-pause": {
+      "suggested_key": { "default": "Alt+Shift+P" },
+      "description": "暂停/继续屏幕录制"
+    },
+    "record-stop": {
+      "suggested_key": { "default": "Alt+Shift+S" },
+      "description": "停止屏幕录制并生成文件"
+    }
+  },
   "content_scripts": [
     {
       "matches": [

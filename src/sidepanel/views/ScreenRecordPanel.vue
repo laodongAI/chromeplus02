@@ -9,7 +9,7 @@
         <span v-if="autoStopCountdown" class="rec-limit" title="到达设定成片时长后自动停止">剩余 {{ autoStopCountdown }}</span>
       </div>
       <!-- UI 三批（组1）：删除 ✏️ emoji，纯文字说明即可（色彩改用 warning token） -->
-      <div class="annot-hint" v-if="annotTabId != null">黑板画笔已开启：默认就是画笔，直接在页面上手写涂画；工具栏可切换 文字/矩形/直线/箭头/荧光/橡皮、颜色与粗细。按 H 隐藏工具栏、空格切换「绘制/操作」。需要画在桌面或 PPT 等其他应用上时，点下方「桌面标注」（需安装 companion 伴生程序）</div>
+      <div class="annot-hint" v-if="annotTabId != null">黑板画笔已开启：默认是操作模式，网页可正常点击；选一个画笔工具即进入绘制模式，可切换 文字/矩形/直线/箭头/荧光/橡皮、颜色与粗细。按 H 隐藏工具栏（两种模式都生效，隐藏后不会录进画面）、空格切换「绘制/操作」（仅绘制模式，操作模式下空格属于页面）。需要画在桌面或 PPT 等其他应用上时，点下方「桌面标注」（需安装 companion 伴生程序）</div>
       <!-- Round 5 #31：按住说话。用 pointer 事件而非 click——click 只有「按下并松开」一个时刻，
            做不出「按住期间开麦」；pointercancel/leave 一并松手，避免麦克风卡在打开态 -->
       <div v-if="pttEnabled" class="ptt-wrap">
@@ -30,6 +30,15 @@
       </div>
       <!-- 画中画录制中微调：合成器支持热更新，不必停录重来 -->
       <div v-if="cameraActive && cameraPip" class="pip-live">
+        <!-- 自view：画中画是画进视频轨的，页面上没有任何浮窗，不给预览就只能回放成片才知道有没有入镜 -->
+        <video
+          ref="camPreviewEl"
+          class="pip-cam"
+          :class="{ 'is-circle': cameraPip.shape === 'circle', 'is-mirror': cameraPip.mirror }"
+          muted
+          playsinline
+          autoplay
+        ></video>
         <span class="pip-live__label">画中画</span>
         <select class="pip-select" :value="cameraPip.position" @change="setPipPosition(($event.target as HTMLSelectElement).value)">
           <option v-for="(label, key) in PIP_POSITION_LABELS" :key="key" :value="key">{{ label }}</option>
@@ -73,6 +82,8 @@
           停止录制
         </BaseButton>
       </div>
+      <!-- 全局快捷键：录其他应用时侧栏按钮点不到，必须让用户知道有键盘入口 -->
+      <div class="rec-hotkeys">{{ RECORD_HOTKEY_HINT }}</div>
     </div>
 
     <!-- 选择来源 -->
@@ -303,6 +314,7 @@
           <svg v-if="!starting" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="4" fill="#ef4444"/></svg>
           {{ starting ? '准备中…' : '开始录制' }}
         </BaseButton>
+        <div class="rec-hotkeys">{{ RECORD_HOTKEY_HINT }}</div>
       </div>
     </div>
 
@@ -395,6 +407,9 @@ import {
   autoStopCountdown,
   highlightOn,
   setCursorHighlight,
+  // 摄像头实时自view：画中画画进视频轨，页面上没有浮窗，不给预览就看不到自己
+  cameraPreviewStream,
+  installRecordingCommandListener,
 } from '../services/recordingStore';
 import {
   DEFAULT_CAMERA_PIP,
@@ -406,6 +421,7 @@ import {
 } from '@/core/cameraOverlay';
 import { PTT_KEY_LABEL } from '@/core/recordingAudio';
 import { AUTO_STOP_MAX_SECONDS, AUTO_STOP_PRESETS, normalizeAutoStopSeconds } from '@/core/recordingLimits';
+import { RECORD_HOTKEY_HINT } from '../utils/shortcutHints';
 
 /** 本模块 logger：统一 `[ScreenRecordPanel]` 前缀，记录标注开关等交互里程碑 */
 const log = createLogger('ScreenRecordPanel');
@@ -419,6 +435,17 @@ const starting = ref(false);
 const overlayOn = ref(false);
 /** 桌面标注启停操作进行中（防止连点重复启动） */
 const overlayBusy = ref(false);
+
+// 全局快捷键（Alt+Shift+P 暂停继续 / Alt+Shift+S 停止）的接收端在 store。
+// 幂等安装：面板反复挂载只装一次，录制活在模块级 store，切走 Tab 不该丢监听。
+installRecordingCommandListener();
+
+/** 摄像头自view 元素：srcObject 只能命令式赋值，模板绑不上 */
+const camPreviewEl = ref<HTMLVideoElement | null>(null);
+
+watch([camPreviewEl, cameraPreviewStream], ([el, stream]) => {
+  if (el && el.srcObject !== stream) el.srcObject = stream;
+}, { immediate: true });
 
 /**
  * 开启 / 关闭桌面标注层。
@@ -842,8 +869,30 @@ function openInEditor(rec: RecordingFile) {
 .ptt-hint { font-size: 11px; color: var(--sp-color-muted); text-align: center; }
 
 /* 录制中的画中画微调条 */
-.pip-live { display: flex; align-items: center; gap: 6px; }
+.pip-live { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .pip-live__label { font-size: 12px; color: var(--sp-color-muted); }
+
+/* 摄像头自view：形状/镜像跟随画中画设置，让用户看到的和录进去的一致 */
+.pip-cam {
+  width: 64px;
+  height: 36px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--sp-color-border-strong);
+  background: #000;
+  flex-shrink: 0;
+}
+.pip-cam.is-circle { width: 40px; height: 40px; border-radius: 50%; }
+.pip-cam.is-mirror { transform: scaleX(-1); }
+
+/* 全局快捷键提示：弱于操作按钮，但录其他应用时它是唯一的操作入口说明 */
+.rec-hotkeys {
+  margin: 8px 16px 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--sp-color-muted);
+}
+.start-wrap .rec-hotkeys { margin: 8px 0 0; text-align: center; }
 
 /* Round 5 #32：自动停止倒计时（跟在计时后面，弱于主计时但可读） */
 .rec-limit {

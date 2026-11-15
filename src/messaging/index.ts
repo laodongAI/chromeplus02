@@ -19,7 +19,9 @@
  *     DOWNLOAD_PROGRESS_EVENT / DOWNLOAD_QUEUE_SNAPSHOT / RESOURCE_UPDATE /
  *     VIDEO_RECORDING_STATUS / VIDEO_PLAYBACK_STATUS / HLS_BLOB_READY /
  *     SOURCES_DOWNLOAD_PROGRESS / CAPTURE_RECORDING_READY /
- *     NET_CAPTURE_UPDATE / NET_CAPTURE_STATE。发送方不等待响应，接收方按 type 判别。
+ *     NET_CAPTURE_UPDATE / NET_CAPTURE_STATE / RECORDING_COMMAND。发送方不等待响应，接收方按 type 判别。
+ *     RECORDING_COMMAND 由全局快捷键触发，侧栏未开时无接收端属正常，发送方必须带 callback
+ *     读 lastError，否则产生未处理拒绝（见 background/commands.ts）。
  */
 
 import type { RtcDownCommand, RtcStreamInfo, RtcUpEvent } from '@/core/webrtcCapture';
@@ -62,6 +64,10 @@ export enum MessageType {
   , ANNOTATE_TOGGLE = 'ANNOTATE_TOGGLE'
   // 录屏点击/光标高亮（Round 5 #32）
   , CURSOR_HIGHLIGHT_TOGGLE = 'CURSOR_HIGHLIGHT_TOGGLE'
+  // 画笔工具栏显隐：由扩展级全局快捷键驱动，与覆盖层开关分开——快捷键不该凭空造出一个画笔层
+  , ANNOTATE_TOOLBAR_TOGGLE = 'ANNOTATE_TOOLBAR_TOGGLE'
+  // 录制控制命令：全局快捷键 → 侧栏 recordingStore（侧栏未开时录制本就不存在）
+  , RECORDING_COMMAND = 'RECORDING_COMMAND'
   // ===== 网络请求捕获（抓 XHR/Fetch、JSONP 接口型脚本与 POST 等写请求；图片/CSS/普通 JS 等静态资源直接丢弃） =====
   // 依赖 chrome.debugger 的 Network 域，可读取请求头/请求体/响应头/响应体
   , NET_CAPTURE_START = 'NET_CAPTURE_START'
@@ -657,6 +663,15 @@ export interface AnnotateToggleMessage { type: MessageType.ANNOTATE_TOGGLE; payl
 /** 录屏点击/光标高亮覆盖层开关（Round 5 #32；广播到所有 frame，iframe 内的点击也要有高亮） */
 export interface CursorHighlightToggleMessage { type: MessageType.CURSOR_HIGHLIGHT_TOGGLE; payload?: { active?: boolean } }
 
+/** 画笔工具栏显隐（只在覆盖层已开启的页面上生效；无载荷，语义就是「翻转当前状态」） */
+export interface AnnotateToolbarToggleMessage { type: MessageType.ANNOTATE_TOOLBAR_TOGGLE }
+
+/** 录制控制命令（背景收到 chrome.commands 后转发给侧栏；侧栏未开时无接收端，属正常） */
+export interface RecordingCommandMessage {
+  type: MessageType.RECORDING_COMMAND;
+  action: 'toggle-pause' | 'stop';
+}
+
 /** 页面正文抽取请求（应答 { success, content: TextContentDTO }，见文件头契约第 2 条） */
 export interface GetTextContentMessage { type: MessageType.GET_TEXT_CONTENT }
 
@@ -700,6 +715,8 @@ export type AnyMessage =
   | HlsBlobReadyMessage
   | AnnotateToggleMessage
   | CursorHighlightToggleMessage
+  | AnnotateToolbarToggleMessage
+  | RecordingCommandMessage
   | GetTextContentMessage
   | GetTextSelectionMessage
   | SourcesTreeScanMessage
