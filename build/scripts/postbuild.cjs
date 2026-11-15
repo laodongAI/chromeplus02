@@ -40,6 +40,9 @@ function copyDir(rel) {
 // 执行拷贝
 copyFile('manifest.json');
 copyDir('icons');
+// dist 才是实际打包分发的目录：第三方 vendored 副本的许可与署名必须随包走
+copyFile('LICENSE');
+copyFile('THIRD_PARTY_NOTICES.md');
 
 // 版本统一：以 package.json 为唯一版本源。
 // 同时回写「根 manifest.json」与「dist/manifest.json」，

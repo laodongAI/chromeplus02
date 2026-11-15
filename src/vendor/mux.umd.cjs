@@ -1,4 +1,6 @@
-/*! @name mux.js @version 6.3.0 @license Apache-2.0 */
+/*! @name mux.js @version 6.3.0 @license Apache-2.0
+ * @see https://github.com/videojs/mux.js — 许可文本见根目录 LICENSE，来源与改动记录见 THIRD_PARTY_NOTICES.md
+ * MODIFIED: 下方 UMD 头部的 require('global/window') 已改为 require('./global-window.js')（Service Worker 无 window）。 */
 (function (global, factory) {
   typeof exports === 'object' && typeof module !== 'undefined' ? module.exports = factory(require('./global-window.js')) :
   typeof define === 'function' && define.amd ? define(['global/window'], factory) :

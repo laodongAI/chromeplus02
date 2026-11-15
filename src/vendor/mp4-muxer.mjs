@@ -1,3 +1,6 @@
+/*! @name mp4-muxer @license MIT @copyright Copyright (c) 2023 Vanilagy
+ * @see https://github.com/Vanilagy/mp4-muxer — 完整许可文本见仓库根目录 THIRD_PARTY_NOTICES.md
+ * 上游已停更（作者转向 Mediabunny），本文件是冻结快照，引入时未记录版本号。 */
 var __accessCheck = (obj, member, msg) => {
   if (!member.has(obj))
     throw TypeError("Cannot " + msg);
