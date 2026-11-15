@@ -12,8 +12,9 @@
  *     特例：DOWNLOAD_QUEUE_SNAPSHOT 既是应答（带 success）也是广播（不带 success，
  *     仅 type/tasks/paused），侧栏对两种形态均可解析，维持现状。
  *  2. 内容脚本请求-应答族（chrome.tabs.sendMessage）：
- *     同样 `{ success: boolean; ... }`；唯一例外 GET_TEXT_CONTENT 返回裸 TextContentDTO
- *     （侧栏 TextPanel 按裸 DTO 解析，改形态会破坏功能，此处记录契约而非改代码）。
+ *     同样 `{ success: boolean; ... }`，无例外。GET_TEXT_CONTENT 与 GET_TEXT_SELECTION
+ *     都是 `{ success: true, content }`（content 分别为 TextContentDTO / TextSelectionDTO），
+ *     失败为 `{ success: false, error }`；侧栏按 res.success + res.content 解析。
  *  3. 广播族（fire-and-forget，无应答）：
  *     DOWNLOAD_PROGRESS_EVENT / DOWNLOAD_QUEUE_SNAPSHOT / RESOURCE_UPDATE /
  *     VIDEO_RECORDING_STATUS / VIDEO_PLAYBACK_STATUS / HLS_BLOB_READY /
@@ -656,10 +657,10 @@ export interface AnnotateToggleMessage { type: MessageType.ANNOTATE_TOGGLE; payl
 /** 录屏点击/光标高亮覆盖层开关（Round 5 #32；广播到所有 frame，iframe 内的点击也要有高亮） */
 export interface CursorHighlightToggleMessage { type: MessageType.CURSOR_HIGHLIGHT_TOGGLE; payload?: { active?: boolean } }
 
-/** 页面正文抽取请求（应答为裸 TextContentDTO，见文件头契约第 2 条） */
+/** 页面正文抽取请求（应答 { success, content: TextContentDTO }，见文件头契约第 2 条） */
 export interface GetTextContentMessage { type: MessageType.GET_TEXT_CONTENT }
 
-/** 划词选区取回请求（应答为裸 TextSelectionDTO） */
+/** 划词选区取回请求（应答 { success, content: TextSelectionDTO }） */
 export interface GetTextSelectionMessage { type: MessageType.GET_TEXT_SELECTION }
 
 /** @deprecated 旧版便捷播放（无载荷） */
