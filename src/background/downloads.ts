@@ -420,7 +420,10 @@ function serializeQueue() {
 }
 
 function broadcastSnapshot() {
-  try { chrome.runtime.sendMessage({ type: MessageType.DOWNLOAD_QUEUE_SNAPSHOT, tasks: serializeQueue(), paused: queuePaused }); } catch { /* noop */ }
+  // 带 callback 才不返回 Promise：否则侧栏未开时的 reject 抓不进 try/catch，成为未处理拒绝
+  try {
+    chrome.runtime.sendMessage({ type: MessageType.DOWNLOAD_QUEUE_SNAPSHOT, tasks: serializeQueue(), paused: queuePaused }, () => { void chrome.runtime.lastError; });
+  } catch { /* 扩展上下文失效等同步异常 */ }
 }
 
 // ===== 进度广播节流（P1-2）=====
@@ -450,7 +453,7 @@ function buildProgressPayload(t: BgDownloadTask) {
 
 /** 立即发送一次进度事件（发送失败视为侧栏未开，静默忽略） */
 function sendProgressEvent(t: BgDownloadTask) {
-  try { chrome.runtime.sendMessage(buildProgressPayload(t)); } catch { /* noop */ }
+  try { chrome.runtime.sendMessage(buildProgressPayload(t), () => { void chrome.runtime.lastError; }); } catch { /* noop */ }
 }
 
 /** 纯进度更新：按任务节流发进度事件，不发全量快照；持久化本身已有防抖，照常调度 */

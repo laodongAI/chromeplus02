@@ -376,7 +376,7 @@ export function initContentScript() {
             recorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); };
             recorder.onstart = () => {
               const statusMsg = { type: MessageType.VIDEO_RECORDING_STATUS, status: 'started' as const, index: idx, startedAt, mode };
-              chrome.runtime.sendMessage(statusMsg);
+              chrome.runtime.sendMessage(statusMsg, () => { void chrome.runtime.lastError; });
             };
             recorder.onstop = () => {
               log.debug('Recorder stopped. Chunks:', chunks.length);
@@ -396,7 +396,7 @@ export function initContentScript() {
               
               if (blob.size === 0) {
                 const errorMsg = { type: MessageType.VIDEO_RECORDING_STATUS, status: 'error' as const, index: idx, error: '录制数据为空 (Blob size 0)', mode };
-                chrome.runtime.sendMessage(errorMsg);
+                chrome.runtime.sendMessage(errorMsg, () => { void chrome.runtime.lastError; });
                 delete activeRecordings[idx];
                 return;
               }
@@ -587,7 +587,7 @@ function flushAggregated() {
     if (finalVideos) payload.videos = finalVideos;
     payload.diff = diff;
     payload.frameId = selfFrameId;
-    try { chrome.runtime.sendMessage({ type: MessageType.RESOURCE_UPDATE, payload }); } catch { /* noop */ }
+    try { chrome.runtime.sendMessage({ type: MessageType.RESOURCE_UPDATE, payload }, () => { void chrome.runtime.lastError; }); } catch { /* noop */ }
   }
   // 清空聚合状态与快照
   aggImagesAdded.clear(); aggImagesRemoved.clear();
@@ -775,8 +775,8 @@ function ensurePlaybackListener(video: HTMLVideoElement, index: number) {
   if (ATTACHED_SET.has(video)) return;
   const sendStatus = () => {
     try {
-      chrome.runtime.sendMessage({ type: MessageType.VIDEO_PLAYBACK_STATUS, index, playing: !video.paused });
-    } catch (e) { /* noop */ }
+      chrome.runtime.sendMessage({ type: MessageType.VIDEO_PLAYBACK_STATUS, index, playing: !video.paused }, () => { void chrome.runtime.lastError; });
+    } catch { /* noop */ }
   };
   video.addEventListener('play', sendStatus);
   video.addEventListener('pause', sendStatus);
