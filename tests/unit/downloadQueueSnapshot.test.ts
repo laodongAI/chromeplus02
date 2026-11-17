@@ -78,10 +78,10 @@ describe('applySnapshot：状态跃迁与历史写入判定', () => {
     });
     expect(latestTasks.find(t => t.id === 'a1')?.status).toBe('completed');
     expect(addHistoryRecord).toHaveBeenCalledTimes(1);
-    // 既有行为记录：新任务直接以终态入快照时，队列项不携带 totalBytes，
-    // 历史 size 为 undefined（体积由"先 running 后 completed"的正常跃迁路径携带）
-    expect(addHistoryRecord.mock.calls[0][0]).toMatchObject({ id: 'a1', status: 'success' });
-    expect(addHistoryRecord.mock.calls[0][0].size).toBeUndefined();
+    // 台账修正：新任务首次入快照即携带的 totalBytes 要落到历史 size 上。
+    // 旧实现漏拷该字段，侧栏未打开期间跑完的任务在历史里永远没有体积，
+    // 登记类本地产物（录制/zip）更是只有这一次快照机会。
+    expect(addHistoryRecord.mock.calls[0][0]).toMatchObject({ id: 'a1', status: 'success', size: 123 });
   });
 
   it('running → completed 跃迁写一次 success；重复 completed 快照不再写', async () => {
@@ -107,6 +107,44 @@ describe('applySnapshot：状态跃迁与历史写入判定', () => {
     deliver({ type: MessageType.DOWNLOAD_QUEUE_SNAPSHOT, tasks: [{ id: 'd1', url: 'https://e.com/d1.mp4', status: 'running', kind: 'image' }] });
     deliver({ type: MessageType.DOWNLOAD_QUEUE_SNAPSHOT, tasks: [{ id: 'd1', url: 'https://e.com/d1.mp4', status: 'error', kind: 'image' }] });
     expect(addHistoryRecord).toHaveBeenCalledTimes(0);
+  });
+
+  it('running → canceled 写一条 canceled：取消的任务不再凭空消失', async () => {
+    deliver({ type: MessageType.DOWNLOAD_QUEUE_SNAPSHOT, tasks: [{ id: 'g1', url: 'https://e.com/g1.mp4', status: 'running', kind: 'video' }] });
+    expect(addHistoryRecord).toHaveBeenCalledTimes(0);
+    deliver({ type: MessageType.DOWNLOAD_QUEUE_SNAPSHOT, tasks: [{ id: 'g1', url: 'https://e.com/g1.mp4', status: 'canceled', kind: 'video' }] });
+    expect(addHistoryRecord).toHaveBeenCalledTimes(1);
+    expect(addHistoryRecord.mock.calls[0][0]).toMatchObject({ id: 'g1', status: 'canceled' });
+    // 同一 canceled 终态重复出现不再二次入档
+    deliver({ type: MessageType.DOWNLOAD_QUEUE_SNAPSHOT, tasks: [{ id: 'g1', url: 'https://e.com/g1.mp4', status: 'canceled', kind: 'video' }] });
+    expect(addHistoryRecord).toHaveBeenCalledTimes(1);
+  });
+
+  it('error 跃迁无错误信息但有错误码：仍入档并以错误码作为原因', async () => {
+    deliver({ type: MessageType.DOWNLOAD_QUEUE_SNAPSHOT, tasks: [{ id: 'h1', url: 'https://e.com/h1.mp4', status: 'running', kind: 'video' }] });
+    deliver({ type: MessageType.DOWNLOAD_QUEUE_SNAPSHOT, tasks: [{ id: 'h1', url: 'https://e.com/h1.mp4', status: 'error', kind: 'video', errorCode: 'INTERRUPTED' }] });
+    expect(addHistoryRecord).toHaveBeenCalledTimes(1);
+    expect(addHistoryRecord.mock.calls[0][0]).toMatchObject({ id: 'h1', status: 'failed', error: 'INTERRUPTED' });
+  });
+
+  it('登记类本地产物：首次入快照即写历史，并携带来源页与产物键', async () => {
+    deliver({
+      type: MessageType.DOWNLOAD_QUEUE_SNAPSHOT,
+      tasks: [{
+        id: 'r1', url: '页面正文.md', fileName: '页面正文.md', kind: 'text', engine: 'local',
+        status: 'completed', idbKey: 'dlart:r1', totalBytes: 4096,
+        sourceUrl: 'https://example.com/a?x=1', sourceTitle: '示例页', sourceTabId: 7,
+      }],
+    });
+    expect(addHistoryRecord).toHaveBeenCalledTimes(1);
+    expect(addHistoryRecord.mock.calls[0][0]).toMatchObject({
+      id: 'r1', kind: 'text', status: 'success', size: 4096,
+      engine: 'local', idbKey: 'dlart:r1',
+      sourceUrl: 'https://example.com/a?x=1', sourceTitle: '示例页', sourceTabId: 7,
+    });
+    const t = latestTasks.find(x => x.id === 'r1');
+    expect(t.sourceUrl).toBe('https://example.com/a?x=1');
+    expect(t.engine).toBe('local');
   });
 
   it('快照中消失的任务从队列移除（后台已清理）', async () => {

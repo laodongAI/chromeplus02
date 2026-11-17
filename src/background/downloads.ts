@@ -14,6 +14,8 @@ import {
   type SettingsUpdateMessage,
   type StartHlsDownloadMessage
 } from '@/messaging';
+import { inferKind, type DownloadKind } from '@/core/downloadTaxonomy';
+import { STORE_HLS_BLOBS, STORE_HLS_SEGMENTS, idbDelete, idbDeleteByPrefix } from '@/shared/blobStore';
 import { formatFilename } from '@/utils/format';
 // P1-8：分级日志（SW 上下文默认 info 级）
 import { createLogger } from '@/utils/logger';
@@ -31,11 +33,24 @@ interface BgDownloadTask {
   id: string;
   url: string;
   fileName?: string;
-  kind?: string;
+  kind?: DownloadKind;
   /** 来源页地址：外挂工具需要它做 Referer（内置 chrome.downloads 用不上） */
   referer?: string;
-  /** direct: chrome.downloads 直链；hls: m3u8 分片下载+合并 */
-  engine?: 'direct' | 'hls';
+  /**
+   * 发起下载的页面地址/标题/tab id（下载台账 · 需求4）。
+   * 与 referer 独立：referer 参与网络请求，sourceUrl 只供侧栏做「本页任务」筛选，
+   * 页面关掉后字段仍在（历史里能看到「这条是哪个页面下的」）。
+   */
+  sourceUrl?: string;
+  sourceTitle?: string;
+  sourceTabId?: number;
+  /**
+   * 本地产物在 IndexedDB blobStore 中的键（登记类任务专用，见 register 动作）。
+   * 这类任务没有远程 URL、也没经过下载器，idbKey 是它唯一的可再保存凭据。
+   */
+  idbKey?: string;
+  /** direct: chrome.downloads 直链；hls: m3u8 分片下载+合并；local: 侧栏已产出的本地产物 */
+  engine?: 'direct' | 'hls' | 'local';
   /** HLS 任务元数据（分片清单等，持久化用于断点续传） */
   hls?: HlsTaskMeta;
   status: 'pending' | 'running' | 'paused' | 'completed' | 'error' | 'canceled';
@@ -143,9 +158,9 @@ export function initDownloadsMessageHandler() {
   installRetryAlarmHandler();
 
   // 直链下载消息（兼容三种类型：audio/video/image 共用 payload 形态，P1-1 泛型收窄）
-  const enqueueHandler = (kind?: string) => (message: DirectDownloadMessage) => {
+  const enqueueHandler = (kind: DownloadKind) => (message: DirectDownloadMessage, sender: chrome.runtime.MessageSender) => {
     const payload = message.payload as StartDownloadPayload;
-    const id = enqueue(payload.url, payload.filename, kind, payload.referer);
+    const id = enqueue(payload.url, payload.filename, kind, payload.referer, sourceOf(payload, sender));
     return { success: true, id };
   };
   registerBgHandler<DirectDownloadMessage>(MessageType.START_DOWNLOAD, enqueueHandler('audio'));
@@ -153,14 +168,25 @@ export function initDownloadsMessageHandler() {
   registerBgHandler<DirectDownloadMessage>(MessageType.DIRECT_DOWNLOAD_GENERIC, enqueueHandler('image'));
 
   // 队列动作
-  registerBgHandler<DownloadQueueActionMessage>(MessageType.DOWNLOAD_QUEUE_ACTION, (message) => {
+  registerBgHandler<DownloadQueueActionMessage>(MessageType.DOWNLOAD_QUEUE_ACTION, (message, sender) => {
     const action = message.action as string;
     switch (action) {
       case 'add': {
         // 缺省 task 保持旧行为（url=undefined 入队，由后续下载流程报错处理）
-        const t = message.task || ({} as { url: string; filename?: string; kind?: string; referer?: string });
-        const id = enqueue(t.url, t.filename, t.kind, t.referer);
+        const t = message.task || ({} as StartDownloadPayload);
+        const id = enqueue(t.url, t.filename, t.kind, t.referer, sourceOf(t, sender));
         return { success: true, id };
+      }
+      case 'register': {
+        // 本地产物登记（文本导出 / 资源包 zip / 录制产物）：不进下载器、不占并发
+        const t = message.task;
+        if (!t?.url) return { success: false, error: '缺少登记条目地址' };
+        const id = registerLocalArtifact(t, sender);
+        return { success: true, id };
+      }
+      case 'remove': {
+        const removed = removeTask(message.id as string);
+        return { success: removed, id: message.id };
       }
       case 'cancel':
         cancelTask(message.id as string);
@@ -184,10 +210,10 @@ export function initDownloadsMessageHandler() {
 
   registerBgHandler(MessageType.DOWNLOAD_QUEUE_SNAPSHOT, () => ({ success: true, tasks: serializeQueue(), paused: queuePaused }));
 
-  registerBgHandler<StartHlsDownloadMessage>(MessageType.START_HLS_DOWNLOAD, (message) => {
+  registerBgHandler<StartHlsDownloadMessage>(MessageType.START_HLS_DOWNLOAD, (message, sender) => {
     const payload = message?.payload;
     if (!payload?.url) return { success: false, error: '缺少播放清单地址' };
-    const id = enqueueHls(payload.url, payload.fileName, payload.referer);
+    const id = enqueueHls(payload.url, payload.filename, payload.referer, sourceOf(payload, sender));
     return { success: true, id };
   });
 
@@ -197,8 +223,42 @@ export function initDownloadsMessageHandler() {
   });
 }
 
-function enqueue(url: string, fileName?: string, kind?: string, referer?: string) {
-  const task: BgDownloadTask = { id: genTaskId(), url, fileName, kind, referer, engine: 'direct', status: 'pending', progress: 0, retries: 0 };
+/**
+ * 来源页元信息（下载台账 · 需求4）。
+ * 侧栏与内容脚本都能填，填不上时后台回落到 sender.tab（见 sourceOf）。
+ */
+interface TaskSourceMeta {
+  sourceUrl?: string;
+  sourceTitle?: string;
+  sourceTabId?: number;
+}
+
+/**
+ * 归一化来源页：显式字段优先，缺失时回落到消息发送方的 tab。
+ * 为什么要双路：内容脚本直接发起的下载（页面上的下载按钮）不会带 sourceUrl，
+ * 但 sender.tab 就是那个页面；侧栏发起的下载 sender.tab 是 undefined（侧栏不是 tab），
+ * 只能靠侧栏显式传当前活动页。两路合并后所有抓取入口都能被「只看本页」命中。
+ * @param payload 消息里携带的字段（可能全空）
+ * @param sender  chrome 运行时给出的发送方
+ */
+function sourceOf(payload: TaskSourceMeta | undefined, sender: chrome.runtime.MessageSender): TaskSourceMeta {
+  const tab = sender?.tab;
+  return {
+    sourceUrl: payload?.sourceUrl || tab?.url || undefined,
+    sourceTitle: payload?.sourceTitle || tab?.title || undefined,
+    sourceTabId: payload?.sourceTabId ?? tab?.id,
+  };
+}
+
+function enqueue(url: string, fileName?: string, kind?: DownloadKind, referer?: string, meta?: TaskSourceMeta) {
+  const task: BgDownloadTask = {
+    id: genTaskId(), url, fileName,
+    // 未显式给类型的入口（如兼容旧调用）按文件名/URL 扩展名归类，
+    // 台账里就不会出现「未分类」这种查不到的记录
+    kind: kind ?? inferKind({ fileName, url }),
+    referer, engine: 'direct', status: 'pending', progress: 0, retries: 0,
+    sourceUrl: meta?.sourceUrl, sourceTitle: meta?.sourceTitle, sourceTabId: meta?.sourceTabId,
+  };
   // 如果未指定文件名并存在命名模板，尝试根据模板生成
   if (!task.fileName) {
     try {
@@ -223,8 +283,11 @@ function genTaskId(): string {
 }
 
 /** 创建 HLS（m3u8）下载任务：分片下载+合并，进度走同一队列 */
-function enqueueHls(url: string, fileName?: string, referer?: string) {
-  const task: BgDownloadTask = { id: genTaskId(), url, kind: 'video', referer, engine: 'hls', status: 'pending', progress: 0, retries: 0 };
+function enqueueHls(url: string, fileName?: string, referer?: string, meta?: TaskSourceMeta) {
+  const task: BgDownloadTask = {
+    id: genTaskId(), url, kind: 'video', referer, engine: 'hls', status: 'pending', progress: 0, retries: 0,
+    sourceUrl: meta?.sourceUrl, sourceTitle: meta?.sourceTitle, sourceTabId: meta?.sourceTabId,
+  };
   try {
     const base = safeBaseName(url).replace(/\.m3u8$/i, '').replace(/^(playlist|index|manifest)$/i, 'video');
     const siteHost = safeSiteHost(url);
@@ -237,6 +300,90 @@ function enqueueHls(url: string, fileName?: string, referer?: string) {
     }
   } catch { task.fileName = fileName || 'video'; }
   queue.push(task); broadcastSnapshot(); schedulePersist(); drain(); return task.id;
+}
+
+/**
+ * 登记「已经产出的本地产物」为一条已完成任务（下载台账 · 需求1）。
+ *
+ * 为什么需要这条路：文本导出、资源包 zip、录制产物的下载动作在侧栏就完成了
+ * （blob → chrome.downloads.download 或 IDB 交接），从未经过后台队列。
+ * 此前它们不进台账，导致「每种抓取都要在下载里有一条记录」做不到。
+ * 登记出来的任务直接是 completed：不入待执行队列、不占并发、不会被 drain 拾起，
+ * 也不会有后续快照把它改状态。
+ *
+ * 按 idbKey 幂等：同一产物重复登记（例如快照竞态下的二次提交）只刷新字段，不产生第二条记录。
+ * @param payload url=产物展示名/来源地址，idbKey=IDB 中 blob 的键，totalBytes=体积
+ * @param sender  消息发送方，用于回落来源页
+ */
+function registerLocalArtifact(payload: StartDownloadPayload, sender: chrome.runtime.MessageSender) {
+  const meta = sourceOf(payload, sender);
+  const fileName = payload.filename || safeBaseNameQuiet(payload.url);
+  const kind = payload.kind ?? inferKind({ fileName, url: payload.url });
+  const existing = payload.idbKey
+    ? queue.find(t => t.idbKey === payload.idbKey)
+    : undefined;
+  if (existing) {
+    existing.fileName = fileName;
+    existing.kind = kind;
+    existing.totalBytes = payload.totalBytes ?? existing.totalBytes;
+    existing.sourceUrl = meta.sourceUrl ?? existing.sourceUrl;
+    existing.sourceTitle = meta.sourceTitle ?? existing.sourceTitle;
+    existing.sourceTabId = meta.sourceTabId ?? existing.sourceTabId;
+    broadcastSnapshot(); schedulePersist();
+    return existing.id;
+  }
+  const now = Date.now();
+  const task: BgDownloadTask = {
+    id: genTaskId(),
+    url: payload.url,
+    fileName,
+    kind,
+    engine: 'local',
+    status: 'completed',
+    progress: 1,
+    finishedAt: now,
+    totalBytes: payload.totalBytes,
+    idbKey: payload.idbKey,
+    sourceUrl: meta.sourceUrl,
+    sourceTitle: meta.sourceTitle,
+    sourceTabId: meta.sourceTabId,
+  };
+  queue.push(task);
+  broadcastSnapshot(); schedulePersist();
+  return task.id;
+}
+
+/** 取不到安全文件名时的兜底展示名（登记路径不允许因为 URL 畸形而抛错） */
+function safeBaseNameQuiet(url: string): string {
+  try { return safeBaseName(url) || 'file'; } catch { return 'file'; }
+}
+
+/**
+ * 从台账中删除一条任务。
+ * 语义边界：只删「队列里的这一条」以及它专属的本地产物 blob，
+ * 已落盘的浏览器下载文件不在此删（那需要用户在界面上明确选择删除文件，
+ * 由侧栏按 chrome.downloads.removeFile 单独发起）。
+ * 进行中的任务先走取消，避免删掉记录后后台仍在写同一个下载。
+ * @returns 是否真的删掉了一条
+ */
+function removeTask(id: string): boolean {
+  const idx = queue.findIndex(t => t.id === id);
+  if (idx < 0) return false;
+  const task = queue[idx];
+  if (task.status === 'pending' || task.status === 'running' || task.status === 'paused') {
+    cancelTask(id);
+  }
+  if (task.engine === 'hls') {
+    // 分片键约定是 `${taskId}:*`（见 hls.ts）；取消路径通常已清，这里兜住异常残留
+    void idbDeleteByPrefix(STORE_HLS_SEGMENTS, `${id}:`).catch(() => { /* noop */ });
+  }
+  if (task.idbKey) {
+    void idbDelete(STORE_HLS_BLOBS, task.idbKey).catch(() => { /* noop */ });
+  }
+  queue.splice(idx, 1);
+  releaseThrottleState(id);
+  broadcastSnapshot(); schedulePersist();
+  return true;
 }
 
 function cancelTask(id: string) {
@@ -276,6 +423,9 @@ function resetTaskForRetry(t: BgDownloadTask) {
 function retryTask(id: string) {
   const t = queue.find(q => q.id === id); if (!t) return;
   if (t.status !== 'error' && t.status !== 'canceled') return;
+  // 登记类本地产物没有可重放的远程地址（url 只是展示名），重试只会拿它去下载而必然失败。
+  // 界面在这类条目上提供的是「重新保存到本地」（按 idbKey 取回 blob），不是重试。
+  if (t.engine === 'local') return;
   resetTaskForRetry(t);
   notifyStatusChange(t); drain();
 }
@@ -415,7 +565,12 @@ function serializeQueue() {
     totalBytes: t.totalBytes,
     speedBps: t.speedBps,
     etaSeconds: t.etaSeconds,
-    retries: t.retries
+    retries: t.retries,
+    // 下载台账：来源页与本地产物键必须随快照下发，否则侧栏的「只看本页」永远为空
+    sourceUrl: t.sourceUrl,
+    sourceTitle: t.sourceTitle,
+    sourceTabId: t.sourceTabId,
+    idbKey: t.idbKey
   }));
 }
 

@@ -27,6 +27,7 @@
 import type { RtcDownCommand, RtcStreamInfo, RtcUpEvent } from '@/core/webrtcCapture';
 import type { ArticleBlock } from '@/core/articleBlocks';
 import type { HighlightAnchor } from '@/core/textHighlight';
+import type { DownloadKind } from '@/core/downloadTaxonomy';
 
 export enum MessageType {
   // 握手
@@ -188,12 +189,40 @@ export interface StartDownloadPayload {
    * 外挂下载器（aria2 / m3u8DL-RE / ffmpeg）可以，缺了它很多站点直接 403。
    */
   referer?: string;
+  /** 媒体类型；缺省时由后台按文件名/URL 扩展名推断 */
+  kind?: DownloadKind;
+  /**
+   * 发起下载的页面地址（下载台账 · 需求4）。
+   * 与 referer 分工不同：referer 是给下载器用的请求头，sourceUrl 是给界面做
+   * 「本页在下的任务」关联用的，因此后台不会拿它去做任何网络动作。
+   */
+  sourceUrl?: string;
+  /** 来源页标题，列表里直接展示「来自：xxx」而不必再查 tab */
+  sourceTitle?: string;
+  /** 来源页 tab id；页面已关闭时为 undefined，仅用于关联不作操作凭据 */
+  sourceTabId?: number;
+  /**
+   * 本地产物在 IndexedDB blobStore 中的键（登记类任务专用）。
+   * 文本导出、资源包 zip、录制产物没有远程 URL，下载动作已经由侧栏完成，
+   * 这里只需登记一条已完成记录，故用 idbKey 指向可重新保存的 blob。
+   */
+  idbKey?: string;
+  /** 产物体积（字节）：登记类任务没有下载器回填 totalBytes，由登记方直接给出 */
+  totalBytes?: number;
 }
 
+/**
+ * 队列动作消息（下载台账扩展）。
+ *  - add / cancel / retry / pause_all / resume_all / retry_failed_all：既有语义不变；
+ *  - register：把「已经产出的本地产物」登记为一条已完成任务（文本导出、zip、录制），
+ *    不走下载器、不占并发；
+ *  - remove：从台账中删除任务（用户在下载界面点删除），同时清理其 IDB 产物。
+ */
 export interface DownloadQueueActionMessage {
   type: MessageType.DOWNLOAD_QUEUE_ACTION;
-  action: 'add' | 'cancel' | 'retry' | 'pause_all' | 'resume_all' | 'retry_failed_all';
-  task?: { url: string; filename?: string; kind?: string; referer?: string };
+  action: 'add' | 'cancel' | 'retry' | 'pause_all' | 'resume_all' | 'retry_failed_all'
+        | 'register' | 'remove';
+  task?: StartDownloadPayload;
   id?: string;
 }
 
@@ -214,24 +243,37 @@ export interface DownloadProgressEventMessage {
 
 export interface DownloadQueueSnapshotMessage {
   type: MessageType.DOWNLOAD_QUEUE_SNAPSHOT;
-  tasks: Array<{
-    id: string;
-    url: string;
-    fileName?: string;
-    kind?: string;
-    engine?: 'direct' | 'hls';
-    status: string;
-    progress?: number;
-    error?: string;
-    downloadId?: number;
-    bytesReceived?: number;
-    totalBytes?: number;
-    speedBps?: number;
-    etaSeconds?: number;
-    errorCode?: string;
-    retries?: number;
-  }>;
+  tasks: DownloadQueueSnapshotTask[];
   paused?: boolean; // 队列是否被全局暂停
+}
+
+/**
+ * 后台队列快照里的单个任务形态（下载台账扩展）。
+ * 侧栏 downloadQueue 服务与后台 serializeQueue 共用这一份形状定义，
+ * 避免「后台加了字段、侧栏类型没跟上」的静默丢字段。
+ */
+export interface DownloadQueueSnapshotTask {
+  id: string;
+  url: string;
+  fileName?: string;
+  kind?: DownloadKind;
+  /** direct=直链、hls=分片合并、local=侧栏已产出的本地产物（登记进台账，不经下载器） */
+  engine?: 'direct' | 'hls' | 'local';
+  status: string;
+  progress?: number;
+  error?: string;
+  downloadId?: number;
+  bytesReceived?: number;
+  totalBytes?: number;
+  speedBps?: number;
+  etaSeconds?: number;
+  errorCode?: string;
+  retries?: number;
+  /** 来源页三件套 + 本地产物键，见 StartDownloadPayload 同名字段 */
+  sourceUrl?: string;
+  sourceTitle?: string;
+  sourceTabId?: number;
+  idbKey?: string;
 }
 
 export interface AudioItemDTO {
@@ -633,8 +675,15 @@ export interface WebRtcCaptureUpdateMessage {
   error?: string;
 }
 
-/** HLS 下载任务入队消息 */
-export interface StartHlsDownloadMessage { type: MessageType.START_HLS_DOWNLOAD; payload: { url: string; fileName?: string; referer?: string } }
+/**
+ * HLS 下载任务入队消息。
+ * payload 复用下载台账的 StartDownloadPayload：字段只增不删，
+ * 后台 enqueueHls 按原有 3 个字段消费，新增的来源页字段向后兼容。
+ */
+export interface StartHlsDownloadMessage {
+  type: MessageType.START_HLS_DOWNLOAD;
+  payload: StartDownloadPayload;
+}
 
 /** 视频元素列表扫描请求（内容脚本） */
 export interface GetVideoListMessage { type: MessageType.GET_VIDEO_LIST }

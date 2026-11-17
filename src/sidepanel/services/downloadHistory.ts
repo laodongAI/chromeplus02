@@ -1,5 +1,8 @@
 // P1-8：分级日志（扩展页面上下文默认 info 级）
 import { createLogger } from '@/utils/logger';
+// 下载台账：类型与终态语义复用 core 纯函数层，避免队列/历史两套字符串各自演化
+import { normalizeKind, isSameSource, type DownloadKind, type HistoryStatus } from '@/core/downloadTaxonomy';
+import { STORE_HLS_BLOBS, idbDelete } from '@/shared/blobStore';
 
 /** 本模块 logger：无原前缀，按模块名新建 */
 const log = createLogger('downloadHistory');
@@ -11,11 +14,23 @@ export interface HistoryItem {
   id: string;
   url: string;
   filename?: string;
-  kind: 'video' | 'image' | 'audio' | 'other';
-  status: 'success' | 'failed';
+  kind: DownloadKind;
+  /**
+   * 终态。canceled 是台账扩展后新增的一档（需求2）：
+   * 用户主动取消的任务此前完全不入档，历史里看不到、也就无从重试。
+   */
+  status: HistoryStatus;
   error?: string;
   timestamp: number;
   size?: number;
+  /** 来源页：让「这条是哪个页面下的」在任务已被队列清理后仍可回答 */
+  sourceUrl?: string;
+  sourceTitle?: string;
+  sourceTabId?: number;
+  /** 本地产物 blob 键（engine=local 的记录）；删除记录时按它回收 IDB 空间 */
+  idbKey?: string;
+  /** 来源方式，徽标展示用（直链 / HLS / 本地产物） */
+  engine?: 'direct' | 'hls' | 'local';
 }
 
 // 使用 Set 存储已下载的 URL 哈希或 URL 本身 (用于快速去重判断)
@@ -42,7 +57,10 @@ let saveTimer: ReturnType<typeof setTimeout> | null = null;
 /** 判断两条历史记录是否内容等价（等价则无需重复写 storage） */
 function sameRecord(a: HistoryItem, b: HistoryItem): boolean {
   return a.status === b.status && a.error === b.error && a.size === b.size
-    && a.filename === b.filename && a.kind === b.kind && a.url === b.url;
+    && a.filename === b.filename && a.kind === b.kind && a.url === b.url
+    // 台账扩展字段一并比对：来源页/产物键变了就是不同记录，不能当作重复丢弃
+    && a.sourceUrl === b.sourceUrl && a.sourceTitle === b.sourceTitle
+    && a.idbKey === b.idbKey && a.engine === b.engine;
 }
 
 /** 安排一次防抖写入（已有待执行写入时不重复安排） */
@@ -71,9 +89,12 @@ export async function loadHistory() {
     const list = res[STORAGE_KEY];
     if (Array.isArray(list)) {
       list.forEach((item: HistoryItem) => {
-        historyList.push(item);
-        if (item.status === 'success') {
-          historySet.add(item.url);
+        // 读入即归一类型：历史是跨版本累积的存储，旧值/异常值落到 'other'，
+        // 分类筛选下拉里就不会出现选不到也看不见的记录
+        const normalized: HistoryItem = { ...item, kind: normalizeKind(item.kind) };
+        historyList.push(normalized);
+        if (normalized.status === 'success') {
+          historySet.add(normalized.url);
         }
       });
     }
@@ -128,6 +149,8 @@ export function isDownloaded(url?: string): boolean {
 export async function addHistoryRecord(item: Omit<HistoryItem, 'timestamp'> & { timestamp?: number }): Promise<void> {
   const record: HistoryItem = {
     ...item,
+    // 类型归一：旧版本/其它入口可能给出六档之外的值，落到 'other' 而不是让分类查询漏掉它
+    kind: normalizeKind(item.kind),
     timestamp: item.timestamp || Date.now()
   };
 
@@ -142,9 +165,10 @@ export async function addHistoryRecord(item: Omit<HistoryItem, 'timestamp'> & { 
     historyList.unshift(record); // 新的在前
   }
 
-  if (record.status === 'success') {
-    historySet.add(record.url);
-  }
+  // 「已下载」集合要跟着终态走：重试后失败/取消的记录必须把 URL 撤出来，
+  // 否则 isDownloaded 会一直回答"已下载"，各面板的下载按钮就永久变成已下载态
+  if (record.status === 'success') historySet.add(record.url);
+  else historySet.delete(record.url);
 
   // 防抖合并写入：窗口内的多次变更只产生一次 storage.local.set
   scheduleSave();
@@ -184,6 +208,55 @@ export async function clearHistory() {
   // 清空是用户显式操作：取消在途防抖并立即落盘，保证后续读取一致
   await flushHistorySave();
   await chrome.storage.local.remove(LEGACY_STORAGE_KEY);
+}
+
+/**
+ * 删除若干条下载历史记录。
+ *
+ * 与 clearHistory 的关键区别：这里是「用户逐条/批量删除」，
+ * 明确可以选择连带删除产物本体（IDB 里的 blob）。默认 **不删**，
+ * 因为「清掉记录」和「删掉我下载的东西」是两个动作，误删不可恢复。
+ * 需要连带删除时传 deleteArtifacts=true，只处理带 idbKey 的本地产物；
+ * 已落到磁盘的浏览器下载文件不在此列（由调用方按 chrome.downloads 单独处理）。
+ *
+ * @param ids 待删除的记录 id 列表
+ * @param options.deleteArtifacts 是否连带删除 IDB 中的本地产物 blob
+ * @returns 实际删除的记录数
+ */
+export async function deleteHistoryRecords(
+  ids: string[],
+  options: { deleteArtifacts?: boolean } = {}
+): Promise<number> {
+  const idSet = new Set(ids.filter(Boolean));
+  if (!idSet.size) return 0;
+  const removed = historyList.filter(i => idSet.has(i.id));
+  if (!removed.length) return 0;
+
+  for (let i = historyList.length - 1; i >= 0; i--) {
+    if (idSet.has(historyList[i].id)) historyList.splice(i, 1);
+  }
+  // 「是否已下载」集合要按剩余记录重建：同一 URL 可能有多条记录（重试），
+  // 只有全部不再 success 才算未下载；简单 clear 会把仍可判为已下载的 URL 误撤
+  for (const item of removed) {
+    if (item.status !== 'success') continue;
+    const stillDownloaded = historyList.some(i => i.url === item.url && i.status === 'success');
+    if (!stillDownloaded) historySet.delete(item.url);
+  }
+
+  if (options.deleteArtifacts) {
+    const keys = [...new Set(removed.map(i => i.idbKey).filter((k): k is string => !!k))];
+    await Promise.all(keys.map(k => idbDelete(STORE_HLS_BLOBS, k).catch(e => log.warn('删除本地产物失败', k, e))));
+  }
+
+  // 删除是用户显式操作：立即落盘，避免刷新后记录又回来了
+  await flushHistorySave();
+  return removed.length;
+}
+
+/** 按来源页取历史记录（下载界面「本页相关」视图用） */
+export function getHistoryBySource(pageUrl: string | undefined | null): HistoryItem[] {
+  if (!pageUrl) return [];
+  return historyList.filter(i => isSameSource(i.sourceUrl, pageUrl));
 }
 
 export function getHistoryCount(): number {

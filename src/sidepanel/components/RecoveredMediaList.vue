@@ -37,6 +37,8 @@ import { onBeforeUnmount, ref } from 'vue';
 import { BaseButton, BaseTag } from './base';
 import { MessageType } from '@/messaging';
 import { sendRuntimeMessage } from '../utils/chromeMessaging';
+// 下载台账：入队统一走 service，由它附带当前页面作为来源页
+import { addDownload, startHlsDownload } from '../services/downloadQueue';
 import { formatLabelOf, sizeLabelOf, type MediaMetaFacts } from '@/core/mediaMeta';
 import { toast } from '../composables/useToast';
 
@@ -77,17 +79,15 @@ async function download(item: RecoveredItem): Promise<void> {
   busyUrl.value = item.url;
   try {
     if (item.kind === 'hls' || item.kind === 'dash') {
-      const resp: any = await sendRuntimeMessage({ type: MessageType.START_HLS_DOWNLOAD, payload: { url: item.url } });
+      // 经 service 入队：自动附带当前页面作为来源，台账「只看本页」才认得分段流任务
+      const resp = await startHlsDownload(item.url);
       if (!resp?.success) throw new Error(resp?.error || '分段流任务创建失败');
       toast.success(item.kind === 'hls' ? '已加入 HLS 下载队列' : '已加入 DASH 下载队列');
       return;
     }
-    const resp: any = await sendRuntimeMessage({
-      type: MessageType.DOWNLOAD_QUEUE_ACTION,
-      action: 'add',
-      task: { url: item.url, kind: item.kind === 'audio' ? 'audio' : 'video' }
-    });
-    if (!resp?.success) throw new Error(resp?.error || '入队失败');
+    // 直链：同样经 service 入队，来源页字段与 HLS 路径保持一致
+    const id = await addDownload(item.url, undefined, item.kind === 'audio' ? 'audio' : 'video');
+    if (!id) throw new Error('入队失败');
     toast.success('已加入下载队列');
   } catch (e) {
     toast.error(`下载失败：${(e as Error)?.message || String(e)}`);

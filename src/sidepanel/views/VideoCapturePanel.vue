@@ -253,7 +253,7 @@ import {
   type VideoRecordingStatusMessage,
   type VideoPlaybackStatusMessage
 } from '@/messaging';
-import { subscribe, retryDownload, cancelDownload, type DownloadTask } from '../services/downloadQueue';
+import { subscribe, retryDownload, cancelDownload, startHlsDownload, type DownloadTask } from '../services/downloadQueue';
 // 收口轮 lint 修复：formatDuration 用下方本地实现（含无效值兜底），移除导入避免遮蔽告警
 import { exportRowsAsJSON, exportRowsAsCSV } from '../services/exportList';
 import { addToBasket } from '../services/collection';
@@ -263,7 +263,7 @@ import { confirmDialog } from '../composables/useConfirm';
 import { loadHistory, isDownloaded, markDownloaded } from '../services/downloadHistory';
 import { loadState, saveState } from '../services/persist';
 import { loadSettings } from '../services/settings';
-import { getActiveTabInfo, sendMessageToTab, sendRuntimeMessage, isReceivingEndMissingError, ensureContentConnected, getAllFramesInfo, type FrameInfo } from '../utils/chromeMessaging';
+import { getActiveTabInfo, sendMessageToTab, isReceivingEndMissingError, ensureContentConnected, getAllFramesInfo, type FrameInfo } from '../utils/chromeMessaging';
 import { getRestrictedPageMessage } from '../utils/restrictedPages';
 import { isResourceUpdateFromBoundSource } from '../utils/resourceUpdate';
 // P1-8：分级日志（扩展页面上下文默认 info 级）
@@ -967,7 +967,8 @@ export default defineComponent({
 
         // 分段流：HLS 走分片下载+合并链路；DASH 交给后台解析（分轨流会给出明确拒绝原因）
         if (candidate.kind === 'hls' || candidate.kind === 'dash') {
-          const resp: any = await sendRuntimeMessage({ type: MessageType.START_HLS_DOWNLOAD, payload: { url: candidate.url } });
+          // 经 service 入队：自动附带当前页面作为来源，「只看本页」才认得视频任务
+          const resp = await startHlsDownload(candidate.url);
           if (resp?.success) {
             lastAction.value = candidate.kind === 'hls' ? '已加入 HLS 下载队列（分片下载并自动合并）' : '已加入 DASH 下载队列（解析分片后自动合并）';
             return { ok: true };

@@ -243,9 +243,12 @@ export default defineComponent({
     // 队列任务的"重试"按钮实际调用的仍是本函数（走历史重下载语义），行为不变，
     // 仅消除"导入被遮蔽"的隐性错误。
     function retryHistoryItem(item: HistoryItem) {
-      // 注意签名：addDownload(url, fileName, kind)；历史记录的 kind 可能为 other，回退为 image
-      const kind = item.kind === 'video' || item.kind === 'audio' ? item.kind : 'image';
-      addDownload(item.url, item.filename, kind);
+      // 台账扩展后 kind 已是六档联合类型，直接沿用记录自己的类型即可：
+      // 旧代码把其它一律压成 'image'，文本/资源包重试后会归错类、按类型查就查不到
+      // 来源页沿用记录自己的来源，不能取当前打开的页面（否则「只看本页」会张冠李戴）
+      addDownload(item.url, item.filename, item.kind, undefined, {
+        sourceUrl: item.sourceUrl, sourceTitle: item.sourceTitle, sourceTabId: item.sourceTabId,
+      });
     }
 
     return { filterStatus, filterType, historyList, displayList, refreshHistory, clearAll, getFilename, formatTime, formatSize, copyLink, retryHistoryItem, retryDownload,
