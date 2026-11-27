@@ -13,6 +13,8 @@ import { isBlockedHost, getRegistrableDomain } from '@/utils/domains';
 import { walkFrameResources, buildFrameResourceIndex, frameCandidatesFor, type CdpFrameTree } from '@/utils/frameResources';
 // P1-8：分级日志（模块运行在后台 SW 上下文，默认 info 级可见）
 import { createLogger } from '@/utils/logger';
+// 受限页原始错误 → 可读原因（debugger 附加在 chrome:// 等页面必然失败）
+import { friendlyRestrictedError } from '@/utils/restrictedPages';
 // 调试会话与 networkCapture 共享：本模块只借用 Page 域，不能自行 detach 掐断对方的 Network 域
 import { acquireDebugger, releaseDebugger } from '@/background/debuggerSession';
 
@@ -73,7 +75,9 @@ export async function getSourcesTree(tabId: number): Promise<SourcesScanResult> 
   } catch (e) {
     log.error('扫描资源目录失败:', e);
     await releaseDebugger(tabId, 'sources-tree');
-    throw e;
+    // 受限页兜底：URL 预检可能拿不到标签页 URL（竞态/权限），把附加失败的原始错误翻成可读原因
+    const friendly = friendlyRestrictedError(e instanceof Error ? e.message : String(e));
+    throw friendly ? new Error(friendly) : e;
   }
 }
 
@@ -164,7 +168,8 @@ export async function fetchSourceContents(
   } catch (e) {
     log.error('批量获取内容失败:', e);
     await releaseDebugger(tabId, 'sources-tree');
-    const detail = e instanceof Error ? e.message : String(e);
+    const raw = e instanceof Error ? e.message : String(e);
+    const detail = friendlyRestrictedError(raw) || raw;
     // 整批中断时把尚未取回的 URL 全部登记为失败，调用方才能如实告知缺失范围
     for (const url of urls) {
       if (!contentMap.has(url) && !failures.some(f => f.url === url)) {

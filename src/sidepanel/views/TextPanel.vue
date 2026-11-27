@@ -125,7 +125,7 @@ import { computed, defineComponent, onMounted, ref } from 'vue';
 import { aiSummarizePage } from '../services/aiAssist';
 import { BaseButton, BaseCard, RestrictedBanner } from '../components/base';
 import { getActiveTabInfo, sendMessageToTab } from '../utils/chromeMessaging';
-import { isRestrictedPage, getRestrictedPageMessage } from '../utils/restrictedPages';
+import { isRestrictedPage, getRestrictedPageMessage } from '../../utils/restrictedPages';
 import { toast } from '../composables/useToast';
 import { confirmDialog } from '../composables/useConfirm';
 import { MessageType, type TextContentDTO } from '@/messaging';

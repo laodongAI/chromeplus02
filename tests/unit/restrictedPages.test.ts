@@ -2,7 +2,7 @@
  * 受限页面识别单测：重点回归「本扩展自身页面误报为其它扩展」问题。
  */
 import { describe, it, expect } from 'vitest';
-import { isRestrictedPage, getRestrictedPageMessage } from '../../src/sidepanel/utils/restrictedPages';
+import { isRestrictedPage, getRestrictedPageMessage, friendlyRestrictedError } from '../../src/utils/restrictedPages';
 
 describe('restrictedPages', () => {
   it('正常网页不受限', () => {
@@ -35,5 +35,26 @@ describe('restrictedPages', () => {
 
   it('其它扩展页面受限', () => {
     expect(isRestrictedPage('chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/popup.html')).toBe(true);
+  });
+
+  describe('friendlyRestrictedError：后台原始错误 → 可读原因', () => {
+    it('翻译 debugger 附加在受限页上的典型错误', () => {
+      expect(friendlyRestrictedError('Cannot access a chrome:// URL')).toContain('浏览器内部页面');
+      expect(friendlyRestrictedError('Cannot access a chrome-extension:// URL')).toBeTruthy();
+      expect(friendlyRestrictedError('Cannot access a edge:// URL')).toBeTruthy();
+      expect(friendlyRestrictedError('Frame with ID 0 cannot be scripted')).toBeTruthy();
+    });
+
+    it('大小写不敏感且兜底覆盖同类错误', () => {
+      expect(friendlyRestrictedError('cannot access a chrome:// url')).toBeTruthy();
+      expect(friendlyRestrictedError('Cannot access contents of the page')).toBeTruthy();
+    });
+
+    it('业务错误保留原文不误翻', () => {
+      expect(friendlyRestrictedError('Another debugger is already attached')).toBeNull();
+      expect(friendlyRestrictedError('Inspected target navigated or closed')).toBeNull();
+      expect(friendlyRestrictedError('')).toBeNull();
+      expect(friendlyRestrictedError(null)).toBeNull();
+    });
   });
 });

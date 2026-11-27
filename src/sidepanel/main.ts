@@ -8,7 +8,7 @@ import './styles/tokens.css';
 import { MessageType } from '@/messaging';
 import { getActiveTabInfo, sendMessageToTab } from './utils/chromeMessaging';
 import { loadSettings } from './services/settings';
-import { isRestrictedPage } from './utils/restrictedPages';
+import { isRestrictedPage } from '../utils/restrictedPages';
 import { initThemeWatcher } from './composables/useTheme';
 // P1-8：分级日志（扩展页面上下文默认 info 级）
 import { createLogger } from '@/utils/logger';

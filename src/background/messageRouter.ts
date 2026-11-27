@@ -15,6 +15,7 @@ import { MessageType, type SourcesDownloadStatusMessage, type SourcesTreeDownloa
 import { createDownloadTask, startDownloadTask, getTaskStatus } from './sourcesDownload';
 import { getSourcesTree, fetchSourceContents, type SourceFetchFailure } from '../content-scripts/sourcesTree';
 import { summarizeSkippedFiles } from '@/utils/frameResources';
+import { getRestrictedPageMessage } from '@/utils/restrictedPages';
 import { idbGet, idbPut, idbDeleteByPrefix, STORE_HLS_BLOBS } from '@/shared/blobStore';
 // P1-8：分级日志（SW 上下文默认 info 级）
 import { createLogger } from '@/utils/logger';
@@ -115,6 +116,10 @@ export function setupMessageRouter() {
     const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
     const tabId = tabs[0]?.id;
     if (!tabId) return { success: false, error: '无法获取当前标签页' };
+
+    // 受限页预检：chrome:// 等内部页上调试器附加必然失败，先给出可读原因，而不是把原始 lastError 透给面板
+    const restricted = getRestrictedPageMessage(tabs[0]?.url);
+    if (restricted) return { success: false, error: restricted };
 
     // 调试会话生命周期由 debuggerSession 仲裁：此处不再无条件 detach，
     // 否则会掐断同 tab 上正在跑的网络捕获（Network 域与本模块的 Page 域可共用一次附加）。

@@ -264,7 +264,7 @@ import { loadHistory, isDownloaded, markDownloaded } from '../services/downloadH
 import { loadState, saveState } from '../services/persist';
 import { loadSettings } from '../services/settings';
 import { getActiveTabInfo, sendMessageToTab, isReceivingEndMissingError, ensureContentConnected, getAllFramesInfo, type FrameInfo } from '../utils/chromeMessaging';
-import { getRestrictedPageMessage } from '../utils/restrictedPages';
+import { getRestrictedPageMessage } from '../../utils/restrictedPages';
 import { isResourceUpdateFromBoundSource } from '../utils/resourceUpdate';
 // P1-8：分级日志（扩展页面上下文默认 info 级）
 import { createLogger } from '@/utils/logger';

@@ -149,7 +149,7 @@ async function injectContentScripts(tabId: number, files: string[]): Promise<voi
     const url = tab?.url || tab?.pendingUrl || '';
     if (url) {
       // 延迟导入避免循环依赖
-      const { getRestrictedPageMessage } = await import('./restrictedPages');
+      const { getRestrictedPageMessage } = await import('../../utils/restrictedPages');
       const msg = getRestrictedPageMessage(url);
       if (msg) throw new Error(msg);
     }

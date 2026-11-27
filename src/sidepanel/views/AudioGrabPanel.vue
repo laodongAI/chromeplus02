@@ -206,7 +206,7 @@ import {
   sendRuntimeMessage,
   type FrameInfo
 } from '../utils/chromeMessaging';
-import { getRestrictedPageMessage } from '../utils/restrictedPages';
+import { getRestrictedPageMessage } from '../../utils/restrictedPages';
 import { isResourceUpdateFromBoundSource } from '../utils/resourceUpdate';
 
 /** 本模块 logger：保留原 `[audio enrich]` 前缀语义 */

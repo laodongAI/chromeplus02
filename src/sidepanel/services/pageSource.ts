@@ -13,7 +13,7 @@
  */
 import { computed, ref } from 'vue';
 import { getActiveTabInfo } from '../utils/chromeMessaging';
-import { isRestrictedPage } from '../utils/restrictedPages';
+import { isRestrictedPage } from '../../utils/restrictedPages';
 import { createLogger } from '@/utils/logger';
 
 const log = createLogger('pageSource');

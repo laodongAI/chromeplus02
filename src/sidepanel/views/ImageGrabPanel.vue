@@ -199,7 +199,7 @@ import { toast } from '../composables/useToast';
 import { confirmDialog } from '../composables/useConfirm';
 import { startFrameCapture, stopFrameCapture, isFrameCaptureActive, getFrameIntervalSeconds, type CapturedFrame } from '../services/frameCapture';
 import { getActiveTabInfo, sendMessageToTab, ensureContentConnected, getAllFramesInfo, getAllFrameIds, isReceivingEndMissingError, type FrameInfo } from '../utils/chromeMessaging';
-import { getRestrictedPageMessage } from '../utils/restrictedPages';
+import { getRestrictedPageMessage } from '../../utils/restrictedPages';
 import { isResourceUpdateFromBoundSource } from '../utils/resourceUpdate';
 import { MessageType } from '@/messaging';
 // P1-8：分级日志（扩展页面上下文默认 info 级）

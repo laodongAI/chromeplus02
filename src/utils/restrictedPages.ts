@@ -71,3 +71,19 @@ export function getRestrictedPageMessage(url?: string | null): string | null {
 export function isRestrictedPage(url?: string | null): boolean {
   return getRestrictedPageMessage(url) != null;
 }
+
+/**
+ * 把后台通道（chrome.debugger / chrome.scripting）在受限页上抛出的原始错误
+ * 翻译成可读原因；不匹配则返回 null（调用方保留原始错误）。
+ * 之所以在拿到原始错误后再映射：活动标签页的 URL 并非总能拿到（权限/竞态），
+ * 预检只能作为第一道防线，这里是兜底。
+ * 口径与 mediaSweep 的优雅降级正则一致，统一收敛到本模块维护。
+ */
+export function friendlyRestrictedError(message?: string | null): string | null {
+  if (!message) return null;
+  if (/cannot access a (chrome|chrome-extension|edge|brave|opera|about|devtools|view-source)/i.test(message)
+    || /cannot be scripted|cannot access/i.test(message)) {
+    return '当前标签页是浏览器内部页面或扩展自身页面，无法作为分析对象。请切换到要分析的网页标签后重试。';
+  }
+  return null;
+}
